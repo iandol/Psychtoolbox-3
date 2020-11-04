@@ -97,6 +97,18 @@ if ~isfield(Psychtoolbox,'version')
     Psychtoolbox.version.major=cvv(1);
     Psychtoolbox.version.minor=cvv(2);
     Psychtoolbox.version.point=cvv(3);
+	
+	% check for a git install
+	if ~IsWin
+		status = system('which git');
+	else
+		status = system('where git');
+	end
+	if status == 0; isGit = true; else; isGit = false; end
+	gitfolder = PsychtoolboxRoot();
+	i=find(filesep==gitfolder);
+	gitfolder = [gitfolder(1:i(end-1)) '.git'];
+	
 
     if any(strcmp(PsychtoolboxRoot, {'/usr/share/octave/site/m/psychtoolbox-3/', '/usr/share/matlab/site/m/psychtoolbox-3/'}))
         % It is a Debian version of the package
@@ -120,6 +132,44 @@ if ~isfield(Psychtoolbox,'version')
 
         % Retrieve the date of the Debian release:
         Psychtoolbox.date = sscanf(result, 'psychtoolbox-3 (%*d.%*d.%*d.%d.%*s');
+	elseif exist(gitfolder,'dir')
+		% there is a .git folder 
+		Psychtoolbox.version.flavor = 'Git';
+		if isGit
+			olddir = pwd;
+			cd(PsychtoolboxRoot);
+			[status, result] = system('TERM=ansi; git log -1'); %term needs to be specified otherwise matlab requires input
+			commit = regexp(result,'(?<=commit )[\w\d]+','match');
+			if ~isempty(commit) && iscell(commit)
+				commit = commit{1};
+			else
+				commit = 'unknown';
+			end
+			Psychtoolbox.version.revision = commit;
+			Psychtoolbox.version.revstring = commit;
+			date = regexp(result,'(?<=Date:\s+)[\w\d][\w\:\+\d\s]+','match');
+			if ~isempty(date) && iscell(date)
+				date = date{1};
+			else
+				date = 'unknown';
+			end
+			Psychtoolbox.date = date;
+			[status,result]=system('TERM=ansi; git remote -v | head -1');
+			url = regexp(result,'http[^\s]+','match');
+			if ~isempty(url) && iscell(url)
+				url = url{1};
+			else 
+				url = '';
+			end
+			Psychtoolbox.version.string = sprintf('%d.%d.%d - Flavor: %s - %s\nFor more info visit:\n%s', ...
+				Psychtoolbox.version.major, Psychtoolbox.version.minor, Psychtoolbox.version.point, ...
+            Psychtoolbox.version.flavor, Psychtoolbox.version.revstring, url);
+			cd(olddir);
+		else
+			Psychtoolbox.version.string = sprintf('%d.%d.%d - Flavor: %s', ...
+				Psychtoolbox.version.major, Psychtoolbox.version.minor, Psychtoolbox.version.point, ...
+            Psychtoolbox.version.flavor);
+		end
     else
         if ~IsOctave && ~verLessThan('matlab', '8.4')
             % R2014b and later contain a Java SVN implementation, so lets use
