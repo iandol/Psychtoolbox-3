@@ -27,98 +27,83 @@ function result=EyelinkDoTrackerSetup(el, sendkey)
 % 22-06-06  fwc OSX-ed
 % 15-06-10  fwc added code for new callback version
 
-result=-1;
-if nargin < 1
-	error( 'USAGE: result=EyelinkDoTrackerSetup(el [,sendkey])' );
+global eyelinkanimationtarget;
+
+doInit_eyelinkanimationtargetMovie = false;
+if isempty(who('global', 'eyelinkanimationtargetMovie')) % if eyelinkanimationtargetMovie not yet initialized
+    doInit_eyelinkanimationtargetMovie = true; % flag set after bringing global to workspace
+end
+global eyelinkanimationtargetMovie;
+if doInit_eyelinkanimationtargetMovie
+    eyelinkanimationtargetMovie = 0; % init movie pointer to 0
 end
 
-% if we have the new callback code, we call it.
+doInit_inDoTrackerSetup = false;
+if isempty(who('global', 'inDoTrackerSetup')) % if inDoTrackerSetup not yet initialized
+    doInit_inDoTrackerSetup = true; % flag set after bringing global to workspace
+end
+global inDoTrackerSetup; % checked by EyelinkDoDriftCorrection, if true then skips Screen('CloseMovie') before return here
+if doInit_inDoTrackerSetup
+    inDoTrackerSetup = true; % flag in EyelinkDoTrackerSetup
+end
+
+doInit_inDoDriftCorrection = false;
+if isempty(who('global', 'inDoDriftCorrection')) % if inDoDriftCorrection not yet initialized
+    doInit_inDoDriftCorrection = true;
+end
+global inDoDriftCorrection; % checked by EyelinkDoTrackerSetup, if true then skips Screen('CloseMovie') before return to EyelinkDoDriftCorrection
+if doInit_inDoDriftCorrection
+    inDoDriftCorrection = false; % not set in EyelinkDoDriftCorrection, init false
+end
+
+if nargin < 1
+    error( 'USAGE: result=EyelinkDoTrackerSetup(el [,sendkey])' );
+end
+% if we have a callback set, we call it.
 if ~isempty(el.callback)
-    if Eyelink('IsConnected') ~= el.notconnected
-        if ~isempty(el.window)            
-            rect=Screen(el.window,'Rect');
-            % make sure we use the correct screen coordinates
-            Eyelink('Command', 'screen_pixel_coords = %d %d %d %d',rect(1),rect(2),rect(3)-1,rect(4)-1);
-        end
-    else
-        return
+    if eyelinkanimationtargetMovie == 0 && strcmpi(el.calTargetType, 'video') && ~isempty(el.calAnimationTargetFilename)
+        loadanimationmovie(el);
     end
     result = Eyelink( 'StartSetup', 1 );
-    
+    if ~inDoDriftCorrection && eyelinkanimationtargetMovie ~= 0 && strcmpi(el.calTargetType, 'video')
+        cleanupmovie(el);
+    end
     return;
 end
+
 % else we continue with the old version
-
-
-% Eyelink('Command', 'heuristic_filter = ON');
-Eyelink( 'StartSetup' );		% start setup mode
-Eyelink( 'WaitForModeReady', el.waitformodereadytime );  % time for mode change
-
-EyelinkClearCalDisplay(el);	% setup_cal_display()
-key=1;
-while key~= 0
-	key=EyelinkGetKey(el);		% dump old keys
+if nargin < 2
+    sendkey = [];
 end
-
-% go directly into a particular mode
-
-if nargin==2
-	if el.allowlocalcontrol==1
-		switch lower(sendkey)
-			case{ 'c', 'v', 'd', el.ENTER_KEY}
-                %forcedkey=BITAND(sendkey(1,1),255);
-				forcedkey=double(sendkey(1,1));
-				Eyelink('SendKeyButton', forcedkey, 0, el.KB_PRESS );
-		end
-	end
+result=EyelinkLegacyDoTrackerSetup(el, sendkey);
+inDoTrackerSetup = false;
+if ~inDoDriftCorrection
+    clear global inDoTrackerSetup inDoDriftCorrection eyelinkanimationtarget eyelinkanimationtargetMovie; % cleanup globals
 end
+return
 
-tstart=GetSecs;
-stop=0;
-while stop==0 && bitand(Eyelink( 'CurrentMode'), el.IN_SETUP_MODE)
 
-	i=Eyelink( 'CurrentMode');
-	
-	if ~Eyelink( 'IsConnected' ) stop=1; break; end;
-
-	if bitand(i, el.IN_TARGET_MODE)			% calibrate, validate, etc: show targets
-		%fprintf ('%s\n', 'dotrackersetup: in targetmodedisplay' );
-		EyelinkTargetModeDisplay(el);		
-	elseif bitand(i, el.IN_IMAGE_MODE)		% display image until we're back
-% 		fprintf ('%s\n', 'EyelinkDoTrackerSetup: in ''ImageModeDisplay''' );
-	  	if Eyelink ('ImageModeDisplay')==el.TERMINATE_KEY 
-			result=el.TERMINATE_KEY;
-	    	return;    % breakout key pressed
-	  	else
-			EyelinkClearCalDisplay(el);	% setup_cal_display()
-		end	
-	end
-
-	[key, el]=EyelinkGetKey(el);		% getkey() HANDLE LOCAL KEY PRESS
-    if 1 && key~=0 && key~=el.JUNK_KEY    % print pressed key codes and chars
-        fprintf('%d\t%s\n', key, char(key) );
+    function cleanupmovie(el)
+        tex=Screen('GetMovieImage', eyewin, eyelinkanimationtarget.movie, 0);
+        Screen('PlayMovie', eyelinkanimationtarget.movie, 0, el.calAnimationLoopParam);
+%         if tex>0
+            Screen('Close', tex);
+%         end
+        Screen('CloseMovie', eyelinkanimationtarget.movie);
+        eyelinkanimationtarget.movie = 0;
     end
-    
-	switch key	
-		case el.TERMINATE_KEY,				% breakout key code
-			result=el.TERMINATE_KEY;
-			return;
-		case { 0, el.JUNK_KEY }          % No or uninterpretable key
-		case el.ESC_KEY,
-			if Eyelink('IsConnected') == el.dummyconnected
-				stop=1; % instead of 'goto exit'
-			end
-		    if el.allowlocalcontrol==1
-	       		Eyelink('SendKeyButton', key, 0, el.KB_PRESS );
-			end
-		otherwise, 		% Echo to tracker for remote control
-		    if el.allowlocalcontrol==1
-	       		Eyelink('SendKeyButton', double(key), 0, el.KB_PRESS );
-			end
-	end
-end % while IN_SETUP_MODE
 
-% exit:
-EyelinkClearCalDisplay(el);	% exit_cal_display()
-result=0;
-return;	
+
+    function loadanimationmovie(el)
+        [movie movieduration fps imgw imgh] = Screen('OpenMovie',  el.window, el.calAnimationTargetFilename, 0, 1, el.calAnimationOpenSpecialFlags1);
+        eyelinkanimationtarget.movie = movie;
+        eyelinkanimationtarget.movieduration = movieduration;
+        eyelinkanimationtarget.fps = fps;
+        eyelinkanimationtarget.imgw = imgw;
+        eyelinkanimationtarget.imgh = imgh;
+        % eyelinkanimationtarget.count = 1;
+        eyelinkanimationtarget.calxy =[];
+        Screen('SetMovieTimeIndex', eyelinkanimationtarget.movie, 0, el.calAnimationSetIndexIsFrames);
+    end
+end
+
