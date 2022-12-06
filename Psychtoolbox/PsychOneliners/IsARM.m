@@ -8,7 +8,7 @@ function resultFlag = IsARM
 
 persistent rc;
 if isempty(rc)
-     rc= ~isempty(strfind(computer, 'arm-'));
+     rc= ~isempty([strfind(computer, 'arm-') strfind(computer, 'aarch64')]);
 end
 
 resultFlag = rc;

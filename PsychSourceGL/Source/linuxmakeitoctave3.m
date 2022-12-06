@@ -52,13 +52,18 @@ end
 fprintf('Building plugin type %i ...\n\n', mode);
 
 % Target folder depends if this is a 64 bit or 32 bit runtime:
-if ~isempty(strfind(computer, '_64'))
+if ~isempty([strfind(computer, '_64') strfind(computer, 'aarch64')])
     v = sscanf(version, '%i.%i.%i');
 
     % Octave 4.4.0 or later?
     if (v(1) >= 5) || (v(1) == 4 && v(2) >= 4)
-        % Some backwards incompatible mex api changes. Treat it as Octave-5:
-        target = 'PsychBasic/Octave5LinuxFiles64/';
+				if IsARM
+					target = 'PsychBasic/Octave5LinuxFilesARM64/';
+					try mkdir([PsychtoolboxRoot target]); end
+				else
+					% Some backwards incompatible mex api changes. Treat it as Octave-5:
+					target = 'PsychBasic/Octave5LinuxFiles64/';
+				end
     else
         % Good old <= Octave 4.2. Like Octave 3.8 - 4.2:
         target = 'PsychBasic/Octave3LinuxFiles64/';
@@ -76,7 +81,7 @@ if mode==0
     % Build Screen.mex:
 
     % Build against system installed GStreamer-1.8+, ideally 1.18+.
-    mex "-W -std=gnu99" --output ../Projects/Linux/build/Screen.mex -Wno-date-time -DPTBMODULE_Screen -DPTB_USE_GSTREAMER -DPTBVIDEOCAPTURE_LIBDC -DPTB_USE_NVSTUSB -DGLEW_STATIC -DPTBOCTAVE3MEX -D_GNU_SOURCE -I/usr/X11R6/include -I/usr/include/gstreamer-1.0 -I/usr/lib/x86_64-linux-gnu/gstreamer-1.0/include -I/usr/lib/i386-linux-gnu/gstreamer-1.0/include -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/lib/arm-linux-gnueabihf/glib-2.0/include -I/usr/include/libxml2 -I../Cohorts/libnvstusb-code-32/include -ICommon/Base -ICommon/Screen -ILinux/Base -ILinux/Screen -L/usr/X11R6/lib Linux/Base/*.c Linux/Screen/*.c Common/Screen/*.c Common/Base/*.c Common/Screen/tinyexr.cc -lc -ldl -lrt -lGL -lGLU -lX11 -lXext -lX11-xcb -lxcb -lxcb-dri3 -lxcb-present -lgstreamer-1.0 -lgstbase-1.0 -lgstapp-1.0 -lgstvideo-1.0 -lgstpbutils-1.0 -lgobject-2.0 -lgmodule-2.0 -lxml2 -lgthread-2.0 -lglib-2.0 -lXxf86vm -ldc1394 -lusb-1.0 -lpciaccess -lXi -lXrandr -lXfixes -lXcomposite
+    mex "-W -std=gnu99" --output ../Projects/Linux/build/Screen.mex -Wno-date-time -DPTBMODULE_Screen -DPTB_USE_GSTREAMER -DPTBVIDEOCAPTURE_LIBDC -DPTB_USE_NVSTUSB -DGLEW_STATIC -DPTBOCTAVE3MEX -D_GNU_SOURCE -I/usr/X11R6/include -I/usr/include/gstreamer-1.0 -I/usr/lib/x86_64-linux-gnu/gstreamer-1.0/include -I/usr/lib/aarch64-linux-gnu/gstreamer-1.0/include -I/usr/lib/i386-linux-gnu/gstreamer-1.0/include -I/usr/include/glib-2.0 -I/usr/lib/aarch64-linux-gnu/glib-2.0/include/ -I/usr/lib/glib-2.0/include -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/lib/arm-linux-gnueabihf/glib-2.0/include -I/usr/lib/aarch64-linux-gnu/ -I/usr/include/libxml2 -I../Cohorts/libnvstusb-code-32/include -ICommon/Base -ICommon/Screen -ILinux/Base -ILinux/Screen -L/usr/X11R6/lib Linux/Base/*.c Linux/Screen/*.c Common/Screen/*.c Common/Base/*.c Common/Screen/tinyexr.cc -lc -ldl -lrt -lGL -lGLU -lX11 -lXext -lX11-xcb -lxcb -lxcb-dri3 -lxcb-present -lgstreamer-1.0 -lgstbase-1.0 -lgstapp-1.0 -lgstvideo-1.0 -lgstpbutils-1.0 -lgobject-2.0 -lgmodule-2.0 -lxml2 -lgthread-2.0 -lglib-2.0 -lXxf86vm -ldc1394 -lusb-1.0 -lpciaccess -lXi -lXrandr -lXfixes -lXcomposite
     
     unix(['cp ../Projects/Linux/build/Screen.mex ' PsychtoolboxRoot target]);
     striplibsfrommexfile([PsychtoolboxRoot target 'Screen.mex']);
@@ -85,7 +90,7 @@ end
 if mode==100 && ~neurodebianbuild
     % Build Screen.mex with Wayland display backend, for desktop Linux:
     fprintf('Building Screen() for native Wayland.\n');
-    mex "-W -std=gnu99 -Wno-deprecated-declarations" --output ../Projects/Linux/build/Screen.mex -Wno-date-time -DPTBMODULE_Screen -DPTB_USE_WAYLAND -DPTB_USE_WAFFLE -DPTB_USE_GSTREAMER -DPTBVIDEOCAPTURE_LIBDC -DGLEW_STATIC -DPTBOCTAVE3MEX -D_GNU_SOURCE -I/usr/local/include/waffle-1 -L/usr/local/lib/x86_64-linux-gnu/ -I/usr/X11R6/include -I/usr/include/gstreamer-1.0 -I/usr/lib/x86_64-linux-gnu/gstreamer-1.0/include -I/usr/lib/i386-linux-gnu/gstreamer-1.0/include -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/libxml2 -I/usr/include/colord-1 -ICommon/Base -ICommon/Screen -ILinux/Base -ILinux/Screen -L/usr/X11R6/lib   Linux/Base/*.c Linux/Screen/*.c Common/Screen/*.c Common/Base/*.c Common/Screen/tinyexr.cc -lc -ldl -lrt -lGL -lGLU -lX11 -lXext -lX11-xcb -lxcb -lxcb-dri3 -lxcb-present -lgstreamer-1.0 -lgstbase-1.0 -lgstapp-1.0 -lgstvideo-1.0 -lgstpbutils-1.0 -lgobject-2.0 -lgmodule-2.0 -lxml2 -lgthread-2.0 -lglib-2.0 -lXxf86vm -ldc1394 -lusb-1.0 -lpciaccess -lXi -lXrandr -lXfixes -lwaffle-1 -lwayland-cursor -lxkbcommon -lcolord
+    mex "-W -std=gnu99 -Wno-deprecated-declarations" --output ../Projects/Linux/build/Screen.mex -Wno-date-time -DPTBMODULE_Screen -DPTB_USE_WAYLAND -DPTB_USE_WAFFLE -DPTB_USE_GSTREAMER -DPTBVIDEOCAPTURE_LIBDC -DGLEW_STATIC -DPTBOCTAVE3MEX -D_GNU_SOURCE -I/usr/local/include/waffle-1 -L/usr/local/lib/x86_64-linux-gnu/ -I/usr/X11R6/include -I/usr/include/gstreamer-1.0 -I/usr/lib/x86_64-linux-gnu/gstreamer-1.0/include -I/usr/lib/i386-linux-gnu/gstreamer-1.0/include -I/usr/include/glib-2.0 -I/usr/lib/aarch64-linux-gnu/glib-2.0/include/ -I/usr/lib/glib-2.0/include -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/libxml2 -I/usr/include/colord-1 -ICommon/Base -ICommon/Screen -ILinux/Base -ILinux/Screen -L/usr/X11R6/lib   Linux/Base/*.c Linux/Screen/*.c Common/Screen/*.c Common/Base/*.c Common/Screen/tinyexr.cc -lc -ldl -lrt -lGL -lGLU -lX11 -lXext -lX11-xcb -lxcb -lxcb-dri3 -lxcb-present -lgstreamer-1.0 -lgstbase-1.0 -lgstapp-1.0 -lgstvideo-1.0 -lgstpbutils-1.0 -lgobject-2.0 -lgmodule-2.0 -lxml2 -lgthread-2.0 -lglib-2.0 -lXxf86vm -ldc1394 -lusb-1.0 -lpciaccess -lXi -lXrandr -lXfixes -lwaffle-1 -lwayland-cursor -lxkbcommon -lcolord
 
     % Store in special Wayland subfolder for now:
     unix(['cp ../Projects/Linux/build/Screen.mex ' PsychtoolboxRoot target 'Wayland/']);
@@ -104,7 +109,7 @@ end
 if mode==1000 && ~neurodebianbuild
     % Build Screen.mex with Waffle display backend, for embedded/android devices:
     fprintf('Hmm, me likes some mobile Waffle with this Screen :-)\n');
-    mex "-W -std=gnu99" --output ../Projects/Linux/build/Screen.mex -Wno-date-time -DPTBMODULE_Screen -DPTB_USE_WAFFLE -DPTB_USE_EGL -DPTB_USE_GLES1 -DPTB_USE_GSTREAMER -DPTBVIDEOCAPTURE_LIBDC -DGLEW_STATIC -DPTBOCTAVE3MEX -D_GNU_SOURCE -I/usr/local/include/waffle-1 -L/usr/local/lib/arm-linux-gnueabihf/ -I/usr/X11R6/include -I/usr/include/gstreamer-1.0 -I/usr/lib/arm-linux-gnueabihf/gstreamer-1.0/include -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/lib/arm-linux-gnueabihf/glib-2.0/include -I/usr/include/libxml2 -ICommon/Base -ICommon/Screen -ILinux/Base -ILinux/Screen -L/usr/X11R6/lib   Linux/Base/*.c Linux/Screen/*.c Common/Screen/*.c Common/Base/*.c Common/Screen/tinyexr.cc -lc -ldl -lrt -lGLESv1_CM -lGL -lGLU -lX11 -lXext -lX11-xcb -lxcb -lxcb-dri3 -lxcb-present -lgstreamer-1.0 -lgstbase-1.0 -lgstapp-1.0 -lgstvideo-1.0 -lgstpbutils-1.0 -lgobject-2.0 -lgmodule-2.0 -lxml2 -lgthread-2.0 -lglib-2.0 -lXxf86vm -ldc1394 -lusb-1.0 -lpciaccess -lXi -lXrandr -lXfixes -lwaffle-1
+    mex "-W -std=gnu99" --output ../Projects/Linux/build/Screen.mex -Wno-date-time -DPTBMODULE_Screen -DPTB_USE_WAFFLE -DPTB_USE_EGL -DPTB_USE_GLES1 -DPTB_USE_GSTREAMER -DPTBVIDEOCAPTURE_LIBDC -DGLEW_STATIC -DPTBOCTAVE3MEX -D_GNU_SOURCE -I/usr/local/include/waffle-1 -L/usr/local/lib/arm-linux-gnueabihf/ -I/usr/X11R6/include -I/usr/include/gstreamer-1.0 -I/usr/lib/arm-linux-gnueabihf/gstreamer-1.0/include -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/lib/aarch64-linux-gnu/glib-2.0/include/ -I/usr/lib/i386-linux-gnu/glib-2.0/include -I/usr/lib/arm-linux-gnueabihf/glib-2.0/include -I/usr/include/libxml2 -ICommon/Base -ICommon/Screen -ILinux/Base -ILinux/Screen -L/usr/X11R6/lib   Linux/Base/*.c Linux/Screen/*.c Common/Screen/*.c Common/Base/*.c Common/Screen/tinyexr.cc -lc -ldl -lrt -lGLESv1_CM -lGL -lGLU -lX11 -lXext -lX11-xcb -lxcb -lxcb-dri3 -lxcb-present -lgstreamer-1.0 -lgstbase-1.0 -lgstapp-1.0 -lgstvideo-1.0 -lgstpbutils-1.0 -lgobject-2.0 -lgmodule-2.0 -lxml2 -lgthread-2.0 -lglib-2.0 -lXxf86vm -ldc1394 -lusb-1.0 -lpciaccess -lXi -lXrandr -lXfixes -lwaffle-1
 
     unix(['cp ../Projects/Linux/build/Screen.mex ' PsychtoolboxRoot target]);
     striplibsfrommexfile([PsychtoolboxRoot target 'Screen.mex']);
@@ -126,7 +131,7 @@ end
 
 if mode==3
     % Build PsychPortAudio.mex:
-    mex --output ../Projects/Linux/build/PsychPortAudio.mex -Wno-date-time -DPTBMODULE_PsychPortAudio -DPTBOCTAVE3MEX -ICommon/Base -ILinux/Base -ICommon/PsychPortAudio -ICommon/Screen  Linux/Base/*.c Common/Base/*.c Common/PsychPortAudio/*.c -lportaudio -lasound -lc -lrt -ldl
+    mex --output ../Projects/Linux/build/PsychPortAudio.mex -Wno-date-time -DPTBMODULE_PsychPortAudio -DPTBOCTAVE3MEX -ICommon/Base -ILinux/Base -ICommon/PsychPortAudio -ICommon/Screen  Linux/Base/*.c Common/Base/*.c Common/PsychPortAudio/*.c -L/usr/lib/aarch64-linux-gnu/ -lportaudio -lasound -lc -lrt -ldl
     unix(['cp ../Projects/Linux/build/PsychPortAudio.mex ' PsychtoolboxRoot target]);
     striplibsfrommexfile([PsychtoolboxRoot target 'PsychPortAudio.mex']);
 end
@@ -239,7 +244,9 @@ if mode==12 && ~neurodebianbuild
 end
 
 if mode == 13 && IsARM && exist('/usr/include/wiringPi.h', 'file')
-    % Build RPiGPIOMex for RaspberryPi. Needs libwiringPi, otherwise we skip this:
+    % Build RPiGPIOMex for RaspberryPi. Needs libwiringPi, this is
+    % not included in the OS, but can be installed from here: 
+    % https://github.com/WiringPi/WiringPi/releases/tag/2.61-1
     curdir = pwd;
     cd('../../Psychtoolbox/PsychContributed/')
     try
