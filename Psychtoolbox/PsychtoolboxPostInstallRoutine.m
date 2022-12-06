@@ -325,6 +325,10 @@ if IsOctave
         if exist([PsychtoolboxRoot 'PsychBasic' filesep 'Octave3LinuxFilesARM'], 'dir')
             rmpath([PsychtoolboxRoot 'PsychBasic' filesep 'Octave3LinuxFilesARM']);
         end
+				
+				if exist([PsychtoolboxRoot 'PsychBasic' filesep 'Octave5LinuxFilesARM64'], 'dir')
+            rmpath([PsychtoolboxRoot 'PsychBasic' filesep 'Octave5LinuxFilesARM64']);
+        end
 
         if exist([PsychtoolboxRoot 'PsychBasic' filesep 'Octave5LinuxFiles64'], 'dir')
             rmpath([PsychtoolboxRoot 'PsychBasic' filesep 'Octave5LinuxFiles64']);
@@ -385,9 +389,9 @@ if IsOctave
         octavepatchv = octavev(3);
 
         fprintf('Octave major version %i detected. Will prepend the following folder to your Octave path:\n', octavemajorv);
-
+				
         % Octave on Linux with ARM processor, e.g., RaspberryPi?
-        if IsLinux && IsARM
+        if IsLinux && IsARM && ~Is64Bit
             % 32-Bit ARM can currently share mex files from Octave 3.8 to at least 6.2,
             % so treat it as Octave 3.8, and all versions will share the same folder:
             octavemajorv = 3;
