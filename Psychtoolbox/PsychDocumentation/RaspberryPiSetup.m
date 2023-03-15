@@ -61,17 +61,20 @@
 %   with the Chrome webbrowser, and with Psychtoolbox built-in GStreamer based
 %   movie/video/audio playback engine. You can play back movies with sound, or
 %   sound files in common formats like .wav or .mp3 or .ogg audio etc., whatever
-%   is supported by GStreamer's collection of plugins.
+%   is supported by GStreamer's collection of plugins. It also works with our
+%   PsychPortAudio driver.
 %
-%   CAUTION: Audio output over HDMI via our PsychPortAudio driver currently does
-%   not work at all! Audio output over headphone jacks - if any - is supposed to
-%   work, but not tested. Working audio output or input via UAC compliant USB audio
-%   cards.
+% - Working audio output or input via UAC compliant USB audio cards.
 %
 % - Working video capture with external USB connected web cams.
 %
-% - Dual-display support via two micro-HDMI connectors up to 4k UHD resolution.
-%   So far tested is single-display operation, due to lack of a 2nd adapter cable.
+% - Dual-display support via two micro-HDMI connectors up to 4k UHD resolution,
+%   but 4k 3840x2160 resolution is limited to 30 Hz refresh rate by default. A
+%   2560x1440 resolution works at 60 Hz, something like 1920x1080 should be able
+%   to reach 100 Hz or a bit more.
+%
+%   So far tested is single-display operation, due to lack of a 2nd micro-HDMI
+%   adapter cable.
 %
 %   The new VideoCore-6 gpu has slightly higher performance than the older VideoCore
 %   4 gpu in RPi 2 and 3. More importantly, the gpu supports full 32 bit floating
@@ -85,10 +88,14 @@
 %   from VPixx, if you are inclined enough to drive a multi-thousand dollar stimulator
 %   with a 50$ microcomputer. Ofc. while accuracy is excellent, performance is more
 %   limited than with a desktop or laptop graphics card from Intel, AMD or NVidia.
+%
 %   Testing showed that stimuli generated without use of alpha-blending can be output
 %   at the full 16 bit or 14 bit precision of VPixx or CRS visual stimulators, while
 %   stimuli created via alpha blending with 16 bit floating point framebuffers can
 %   achieve up to 11 bit precision, depending on specific stimulus.
+%
+%   Output precision without special stimulators to regular displays are still
+%   limited to 8 bpc maximum, as of Linux 6.2 in February 2023.
 %
 %   Movie playback of full HD video at 24 fps is possible with suitably encoded
 %   movies and proper playback settings. For playback of H264 encoded movies, the
@@ -104,6 +111,15 @@
 %   at potentially lower performance. To summarize: Good performance playback of HD
 %   content at good framerates works if you do everything right wrt. playback parameters
 %   and encoding. Otherwise your mileage may vary both wrt. performance and reliability.
+%
+%   It is also possible to enable experimental Vulkan display support, although this
+%   is of no meaningful benefit right now (as of March 2023), and just yields you lower
+%   performance and broken visual stimulation timing and timestamps. The way to enable
+%   this is to follow the following instructions on how to use PiKISS to install an
+%   up to date Vulkan driver for the RPi 4+. It is important to install a driver from
+%   Mesa 23.1 or later: https://qengineering.eu/install-vulkan-on-raspberry-pi.html
+%   After that, you can launch Octave from the command line with the use of the
+%   zink OpenGL driver via the following: MESA_LOADER_DRIVER_OVERRIDE=zink octave
 %
 %
 %   If you use Psychtoolbox with Raspbian, these setup steps are strongly recommended:

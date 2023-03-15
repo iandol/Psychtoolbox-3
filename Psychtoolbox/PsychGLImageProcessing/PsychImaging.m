@@ -1453,22 +1453,28 @@ function [rc, winRect] = PsychImaging(cmd, varargin)
 % * 'UseVulkanDisplay' Display this onscreen window using a Vulkan-based display
 %   backend. This only works on graphics card + operating system combinations
 %   which support both the OpenGL and Vulkan rendering api's and OpenGL-Vulkan
-%   interop. As of April 2021 this would be modern AMD and NVidia graphics cards
-%   under modern GNU/Linux (Ubuntu 18.04-LTS and later) and Microsoft Windows-10.
+%   interop. As of March 2023 this would be modern AMD, Intel, and NVidia graphics
+%   cards under modern GNU/Linux (Ubuntu 22.04-LTS and later) and under Microsoft
+%   Windows-10 and later. Very experimental support for the curious is also possible
+%   on the RaspberryPi 4/400 and later with Mesa 23.1 or later, but this support
+%   does not have any advantages over standard mode, quite the contrary! See
+%   'help RaspberryPiSetup' if you wanted to try it anyway.
 %
-%   Apple macOS 10.15.4 Catalina and later is also supported, if you install the
+%   Apple macOS 10.15.4 Catalina and later is also supported if you install the
 %   3rd party Khronos open-source MoltenVK "Vulkan on Metal" driver. However, this
-%   support is very unreliable wrt. stimulus timing at least on macOS 10/11, due to
-%   severe bugs in Apple's macOS 10/11 Metal graphics api, which only Apple could fix.
-%   Performance is also miserable, achieving at most a framerate that is half the
-%   video refresh rate of the display monitor. The status on macOS 12 is unknown
-%   as of August 2021. Do not ask us for help in using this on macOS, don't trust it!
+%   support is very unreliable wrt. stimulus timing at least on macOS 10/11/12, due
+%   to severe bugs in Apple's macOS 10/11 Metal graphics api, which only Apple could
+%   fix. Performance is also miserable, achieving at most a framerate that is half
+%   the video refresh rate of the display monitor. The status on macOS 13 is unknown
+%   as of March 2023. Do not ask us for help in using this on macOS, don't trust it!
 %
 %   At the moment 'UseVulkanDisplay' does not provide any advantages for standard
-%   visual stimulus display tasks, quite the contrary! The current implementation
-%   is *experimental* and may go through backwards incompatible changes which may
-%   break your scripts if you rely on it! Only use if you really know what you are
-%   doing!
+%   visual stimulus display tasks. It can be of some benefit if one employs display
+%   mirroring on Linux/X11 via the 'MirrorDisplayTo2ndOutputHead' task, or wants to
+%   flexibly operate multi-display setups under Linux/X11. It also provides very high
+%   precision framebuffers under Linux with AMD graphics cards and the AMDVLK Vulkan
+%   driver via the 'EnableNative16BitFramebuffer' task. For other more standard tasks,
+%   it is of no benefit right now and may reduce performance instead.
 %
 %   Usage:
 %
@@ -1887,6 +1893,24 @@ if strcmpi(cmd, 'OpenWindow')
     % Set override framebuffer rect to "none" by default:
     ovrfbOverrideRect = [];
 
+    % Override numbuffers -- always 2:
+    numbuffers = 2;
+
+    if nargin < 7 || isempty(varargin{6})
+        stereomode = 0;
+    else
+        stereomode = varargin{6};
+    end
+
+    if nargin < 8 || isempty(varargin{7})
+        multiSample = []; % User defers choice of MSAA to us.
+    else
+        multiSample = varargin{7};
+        if ~isscalar(multiSample) || ~isreal(multiSample)
+            error('PsychImaging(''OpenWindow''): Invalid multisample value specified. Not an integer scalar.');
+        end
+    end
+
     % Running on a VR headset?
     if ~isempty(find(mystrcmp(reqs, 'UseVRHMD')));
         % Yes:
@@ -1902,17 +1926,13 @@ if strcmpi(cmd, 'OpenWindow')
             error('PsychImaging(''OpenWindow''): Invalid HMD handle specified for UseVRHMD task. No such device opened.');
         end
 
-        % Compute special OpenWindow overrides for winRect, framebuffer rect, and specialflags, as needed:
-        [winRect, ovrfbOverrideRect, ovrSpecialFlags] = hmd.driver('OpenWindowSetup', hmd, screenid, winRect, ovrfbOverrideRect, ovrSpecialFlags);
+        % Compute special OpenWindow overrides for winRect, framebuffer rect, specialflags and MSAA, as needed:
+        [winRect, ovrfbOverrideRect, ovrSpecialFlags, multiSample] = hmd.driver('OpenWindowSetup', hmd, screenid, winRect, ovrfbOverrideRect, ovrSpecialFlags, multiSample);
     end
 
-    % Override numbuffers -- always 2:
-    numbuffers = 2;
-
-    if nargin < 7 || isempty(varargin{6})
-        stereomode = 0;
-    else
-        stereomode = varargin{6};
+    % If multiSample is still "use default" choice, then override it to our default of 0 for "no MSAA":
+    if isempty(multiSample)
+        multiSample = 0;
     end
 
     % Compute correct imagingMode - Settings for current configuration and return it:
@@ -1982,12 +2002,6 @@ if strcmpi(cmd, 'OpenWindow')
                 end
             end
         end
-    end
-
-    if nargin < 8 || isempty(varargin{7})
-        multiSample = 0;
-    else
-        multiSample = varargin{7};
     end
 
     if nargin < 9 || isempty(varargin{8})
