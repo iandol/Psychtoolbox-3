@@ -2,15 +2,15 @@ function res = CV1Test(waitframes, useRTbox)
 % res = CV1Test([waitframes=90][, useRTbox=0]) - A timing test script for HMDs by use of a photometer.
 %
 % Needs the RTBox, and a photo-diode or such, e.g., a ColorCal-II,
-% connected to the TTL trigger input.
+% connected to the TTL trigger input of a RTBox or CRS Bits#.
 %
-% Atm., we still measure a discrepancy of about 75 msecs between what
-% 'Flip' reports according to our drivers timestamping, and what the
-% photometer based timestamping reports. That's still not good enough, and
-% i'm out of ideas on how to improve this.
-%
-% Onset scheduling also becomes erratic for short waitframes intervals
-% between white flashes.
+% While measured timestamps/timing on OculusVR-1 via PsychOculusVR1 is catastrophic,
+% and bad on all proprietary OpenXR runtimes on Windows (OculusVR, SteamVR) and Linux
+% (SteamVR), as well as with standard Monado, we get close to perfect timestamps with
+% our "metrics enhanced" Monado on Linux + Mesa Vulkan drivers with timestamping support,
+% as tested with both Oculus Rift CV-1 and HTC Vive Pro Eye on AMD Raven Ridge apu with
+% radv + timing extension and Monado metrics mode. Errors are sub-millisecond wrt. to
+% testing with a ColorCal2 and also with a Videoswitcher in simulated HMD mode.
 %
 
 if nargin < 2 || isempty(useRTbox)
@@ -31,7 +31,6 @@ PsychImaging('PrepareConfiguration');
 % Setup the HMD to act as a regular "monoscopic" display monitor
 % by displaying the same image to both eyes. We need reliable timing and
 % timestamping support for this test script:
-% hmd = PsychVRHMD('AutoSetupHMD', 'Monoscopic', 'HUD=0 DebugDisplay');
 hmd = PsychVRHMD('AutoSetupHMD', 'Monoscopic', 'TimingPrecisionIsCritical TimingSupport TimestampingSupport');
 if isempty(hmd)
     error('No supported XR device found. Game over!');
@@ -226,6 +225,14 @@ if useRTbox
             % cycle. (Note the counter-intuitive but correct negative sign!):
             scanoutToPhotonOffset = scanoutToPhotonOffset - 0.008;
         end
+
+        % Monado with a HTC Vive Pro (Eye)?
+        if ~isempty(strfind(hmdinfo.modelName, 'Monado: HTC Vive Pro'))
+            % HTC Vive Pro (Eye) has a OLED with essentially "rolling shutter".
+            % Estimated to about ~8 msecs in a 11.111 msecs / 90 Hz refresh
+            % cycle. (Note the counter-intuitive but correct negative sign!):
+            scanoutToPhotonOffset = scanoutToPhotonOffset - 0.004;
+        end
     end
 
     if strcmpi(hmdinfo.type, 'OpenXR') && ~isempty(strfind(hmdinfo.subtype, 'SteamVR'))
@@ -237,6 +244,15 @@ if useRTbox
             % Estimated to about ~8 msecs in a 11.111 msecs / 90 Hz refresh
             % cycle. (Note the counter-intuitive but correct negative sign!):
             scanoutToPhotonOffset = scanoutToPhotonOffset - 0.008;
+        end
+
+        % SteamVR/OpenXR on MS-Windows with HTC Vive Pro Eye?
+        if strcmpi(hmdinfo.modelName, 'Vive OpenXR: Vive SRanipal')
+            % Vive Pro Eye has a 90 Hz OLED with essentially "rolling shutter".
+            % The measurement is 2 msecs earlier than flip mid-display ts
+            % with the specific photometer setup of kleinerm, so lets
+            % compensate for that to simplify data analysis:
+            scanoutToPhotonOffset = scanoutToPhotonOffset + 0.002;
         end
     end
 

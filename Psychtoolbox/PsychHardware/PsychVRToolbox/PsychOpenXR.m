@@ -198,14 +198,14 @@ function varargout = PsychOpenXR(cmd, varargin)
 % tradeoff on all the runtimes where such a tradeoff is required.
 %
 % As mentioned here, in "help PsychVRHMD" and our "help OpenXR" overview
-% and setup instructions, currently no reliable standard OpenXR
-% implementation with reliable and trustworthy timestamping exists. Proper
-% enhancements to OpenXR will need to be done in the future. Right now, as
-% of Psychtoolbox 3.0.19.1, we have a hacky solution for a subset of Linux
-% users, called "Monado metrics timestamping hack". It goes as follows:
+% and setup instructions, currently no standard OpenXR implementation with
+% reliable and trustworthy timestamping exists. Proper enhancements to
+% OpenXR will need to be done in the future. Right now, as of Psychtoolbox
+% 3.0.19.2, we have a hacky solution for a subset of Linux users, called
+% "Monado metrics timestamping hack". It goes as follows:
 %
 % If you need reliable timestamping, the only solution right now is to use
-% Linux + a modified version of Monado + a modified version of Mesa + an
+% Linux + the latest Monado upstream version + a modified version of Mesa + an
 % AMD or Intel gpu of sufficient performance + a VR HMD supported by Monado
 % on Linux. Contact our paid support "help PsychPaidSupportAndServices" for
 % help in setting up this feature and getting suitable modified Monado and
@@ -227,11 +227,11 @@ function varargout = PsychOpenXR(cmd, varargin)
 %     2. Start monado-service and use the created fifo file as output file
 %        for the metrics log, e.g., in a terminal window via
 %
-%        "XRT_METRICS_FILE=/usr/local/framequeue.protobuf monado-service"
+%        "XRT_METRICS_FILE=/usr/local/framequeue.protobuf XRT_METRICS_EARLY_FLUSH=true monado-service"
 %
 %        This will launch the monado-service OpenXR compositor, enable its
-%        metrics logging into the fifo, and block its startup until the
-%        Psychtoolbox XR work session is started.
+%        metrics logging with low latency into the fifo, and block its
+%        startup until the Psychtoolbox XR work session is started.
 %
 %     3. Start a PTB session, also with XRT_METRICS_FILE environment variable
 %        specified to the same fifo file location during launch of Octave or
@@ -301,7 +301,7 @@ function varargout = PsychOpenXR(cmd, varargin)
 % The returned struct may contain more information, but the fields mentioned
 % above are the only ones guaranteed to be available over the long run. Other
 % fields may disappear or change their format and meaning anytime without
-% warning.
+% warning. See 'help PsychVRHMD' for more detailed info about available fields.
 %
 %
 % isSupported = PsychOpenXR('Supported');
@@ -1294,7 +1294,7 @@ if strcmpi(cmd, 'Open')
     fprintf('Khronos under Apache 2.0 and MIT license: SPDX license identifier “Apache-2.0 OR MIT”\n\n');
   end
 
-  [handle, modelName, runtimeName] = PsychOpenXRCore('Open', varargin{:});
+  [handle, modelName, runtimeName, hasEyeTracking] = PsychOpenXRCore('Open', varargin{:});
 
   newhmd.handle = handle;
   newhmd.driver = @PsychOpenXR;
@@ -1309,6 +1309,7 @@ if strcmpi(cmd, 'Open')
   newhmd.hapticFeedbackSupported = 1;
   newhmd.VRControllersSupported = 1;
   newhmd.controllerTypes = 0;
+  newhmd.eyeTrackingSupported = hasEyeTracking;
 
   % Usually HMD tracking also works for mono display mode:
   newhmd.noTrackingInMono = 0;
@@ -1323,8 +1324,8 @@ if strcmpi(cmd, 'Open')
   newhmd.needMTForMonadoMetricsFifo = 0;
 
   % SteamVR OpenXR runtime needs a workaround for not properly
-  % managing its OpenGL context sometimes. So far confirmed to be
-  % needed on Linux with SteamVR 1.24.6. Status on Windows not yet known:
+  % managing its OpenGL context sometimes. Needed on Linux with
+  % SteamVR 1.24.6, but not on Windows:
   if IsLinux && strcmp(runtimeName, 'SteamVR/OpenXR')
     newhmd.steamXROpenGLWa = 1;
   else
@@ -2086,22 +2087,25 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
     if hmd{handle}.multiThreaded == 0
       fprintf('PsychOpenXR-WARNING: User script needs multi-threading for its use-case, but multi-threading is disabled! Expect timing/timestamping/jitter/judder problems!\n');
     else
-      % Special troublemakers? SteamVR on Windows with OculusVR backend
-      % will hang/fail/malfunction if Screen('BeginOpenGL') is used for
-      % typical 3D rendering, unless OpenGL context isolation is disabled,
-      % which is a troublemaker in many other ways!
-      if IsWin && hmd{handle}.use3DMode && strcmpi(hmd{handle}.modelName, 'SteamVR/OpenXR : oculus')
-        fprintf('PsychOpenXR-WARNING: User script needs multi-threading for its use-case, but broken MS-Windows SteamVR runtime with OculusVR backend in use!\n');
+      % Special troublemakers? SteamVR on Windows, as of version 1.25.6
+      % from March 2023 will cause Matlab to hang / fail / malfunction if
+      % Screen('BeginOpenGL') is used for typical 3D rendering, unless
+      % OpenGL context isolation is disabled, which is a troublemaker in
+      % many other ways! Bug confirmed for both OculusVR backend with
+      % Oculus Rift CV-1, and Vive backend with HTC Vive Pro Eye. Tested on
+      % both AMD and NVidia graphics:
+      if IsWin && hmd{handle}.use3DMode && strcmpi(hmd{handle}.subtype, 'SteamVR/OpenXR')
+        fprintf('PsychOpenXR-WARNING: User script needs multi-threading for its use-case, but broken MS-Windows SteamVR OpenXR runtime in use!\n');
         % kPsychDisableContextIsolation in use?
         if bitand(Screen('Preference', 'ConserveVRAM'), 8)
           fprintf('PsychOpenXR-WARNING: I see you disabled OpenGL context isolation to work around the problem. Tread carefully, this\n');
           fprintf('PsychOpenXR-WARNING: may screw up rendering and Screen() operation badly if you don''t know exactly what you are doing!\n');
         else
-          % This is an almost guaranteed crasher as of SteamVR 1.24.7 from
-          % February 2023 - will fail after a few seconds of 3D rendering
-          % with a hard hang of Matlab/Octave and need to kill the
+          % This is an almost guaranteed crasher as of SteamVR 1.25.6 from
+          % March 2023 - it will fail after a few seconds of 3D rendering
+          % with a hard hang of Matlab and one needs to kill the
           % application via task manager etc.:
-          fprintf('PsychOpenXR-WARNING: As of SteamVR version 1.24.7 from February 2023, this will almost certainly end in a Psychtoolbox hang or crash\n');
+          fprintf('PsychOpenXR-WARNING: As of SteamVR version 1.25.6 from March 2023, this will almost certainly end in a Psychtoolbox hang or crash\n');
           fprintf('PsychOpenXR-WARNING: if your script calls Screen(''BeginOpenGL'') anywhere. Brace for impact! Report back if you do not experience any\n');
           fprintf('PsychOpenXR-WARNING: problems with a later/future SteamVR version.\n');
         end

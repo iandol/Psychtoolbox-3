@@ -160,6 +160,7 @@ typedef struct PsychOpenXRDevice {
     int                                 maxSamples;
     int                                 numMSAASamples;
     XrSpace                             handPoseSpace[2];
+    int                                 hasEyeTracking;
     psych_bool                          isTracking;                     // MT mutex.
     psych_bool                          needLocate;                     // MT mutex.
     int                                 viewLayerType;                  // MT mutex.
@@ -209,10 +210,16 @@ static XrInstanceProperties instanceProperties;
 #define XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME "XR_HTC_vive_focus3_controller_interaction"
 #endif
 
+#ifndef XR_EXT_DPAD_BINDING_EXTENSION_NAME
+#define XR_EXT_DPAD_BINDING_EXTENSION_NAME "XR_EXT_dpad_binding"
+#endif
+
 // Supported instance extensions:
 static psych_bool has_XR_EXT_hp_mixed_reality_controller = FALSE;
 static psych_bool has_XR_HTC_vive_cosmos_controller_interaction = FALSE;
 static psych_bool has_XR_HTC_vive_focus3_controller_interaction = FALSE;
+static psych_bool has_XR_EXT_eye_gaze_interaction = FALSE;
+static psych_bool has_XR_EXT_dpad_binding = FALSE;
 
 // Shared debug messenger for the whole process:
 XrDebugUtilsMessengerEXT debugMessenger = XR_NULL_HANDLE;
@@ -227,6 +234,7 @@ PsychOpenXRDevice openxrdevices[MAX_PSYCH_OPENXR_DEVS];
 static unsigned int devicecount = 0;
 
 // List and count of available XR system devices for use:
+XrSystemEyeGazeInteractionPropertiesEXT eyeGazeAvailable[MAX_PSYCH_OPENXR_DEVS];
 XrSystemProperties availableSystems[MAX_PSYCH_OPENXR_DEVS];
 static int numAvailableDevices = 0;
 
@@ -317,7 +325,7 @@ void InitializeSynopsis(void)
     synopsis[i++] = "";
     synopsis[i++] = "oldVerbosity = PsychOpenXRCore('Verbosity' [, verbosity]);";
     synopsis[i++] = "numDevices = PsychOpenXRCore('GetCount');";
-    synopsis[i++] = "[openxrPtr, modelName, runtimeName] = PsychOpenXRCore('Open' [, deviceIndex=0]);";
+    synopsis[i++] = "[openxrPtr, modelName, runtimeName, hasEyeTracking] = PsychOpenXRCore('Open' [, deviceIndex=0]);";
     synopsis[i++] = "PsychOpenXRCore('Close' [, openxrPtr]);";
     synopsis[i++] = "controllerTypes = PsychOpenXRCore('Controllers', openxrPtr);";
     synopsis[i++] = "[oldType, spaceSize] = PsychOpenXRCore('ReferenceSpaceType', openxrPtr [, newType]);";
@@ -872,6 +880,9 @@ static int enumerateXRDevices(XrInstance instance) {
         return(0);
     }
 
+    if (has_XR_EXT_eye_gaze_interaction)
+        availableSystems[numAvailableDevices].next = &eyeGazeAvailable[numAvailableDevices];
+
     // Got a hardware XR system. Query and store its properties and systemId:
     result = xrGetSystemProperties(instance, systemId, &availableSystems[numAvailableDevices]);
     if (!resultOK(result)) {
@@ -883,13 +894,15 @@ static int enumerateXRDevices(XrInstance instance) {
     }
 
     if (verbosity > 3) {
-        printf("PsychOpenXRCore-INFO: %i. XR system: VendorId 0x%x : \"%s\" : orientationTracking %i : positionTracking %i : %i layers of max size %i x %i.\n", numAvailableDevices,
+        printf("PsychOpenXRCore-INFO: %i. XR system: VendorId 0x%x : \"%s\" : orientationTracking %i : positionTracking %i : %i layers of max size %i x %i : Gaze tracking: %i.\n",
+               numAvailableDevices,
                availableSystems[numAvailableDevices].vendorId, availableSystems[numAvailableDevices].systemName,
                availableSystems[numAvailableDevices].trackingProperties.orientationTracking,
                availableSystems[numAvailableDevices].trackingProperties.positionTracking,
                availableSystems[numAvailableDevices].graphicsProperties.maxLayerCount,
                availableSystems[numAvailableDevices].graphicsProperties.maxSwapchainImageWidth,
-               availableSystems[numAvailableDevices].graphicsProperties.maxSwapchainImageHeight);
+               availableSystems[numAvailableDevices].graphicsProperties.maxSwapchainImageHeight,
+               eyeGazeAvailable[numAvailableDevices].supportsEyeGazeInteraction);
     }
 
     // Increment count of available devices:
@@ -1457,17 +1470,31 @@ static psych_bool createDefaultXRInputConfig(XrInstance xrInstance)
             { .action = openxr__gripValueAction[1], .binding = gripClickPath[1] },
             { .action = openxr__thumbStick2DAction[0], .binding = trackpadPath[0] },
             { .action = openxr__thumbStick2DAction[1], .binding = trackpadPath[1] },
-            BBIND(OVR_Button_Enter, "/user/hand/left/input/menu/click"),
-            BBIND(OVR_Button_Enter, "/user/hand/right/input/menu/click"),
+            BBIND(OVR_Button_Enter, "/user/hand/left/input/menu/click"),        // For consistency with Oculus touch left.
+            BBIND(OVR_Button_Home, "/user/hand/right/input/menu/click"),        // For consistency with Oculus touch right.
+            BBIND(OVR_Button_A, "/user/hand/right/input/trigger/click"),        // Unusual to map on right trigger, but gives us a A button.
+            BBIND(OVR_Button_X, "/user/hand/left/input/trigger/click"),         // Unusual to map on left trigger, but gives us a B button.
+            BBIND(OVR_Button_B, "/user/hand/right/input/system/click"),         // Map B and Y to right/left system buttons. These will often not
+            BBIND(OVR_Button_Y, "/user/hand/left/input/system/click"),          // work, as they are blocked by runtime, e.g., on SteamVR+Windows.
             BBIND(OVR_Button_LThumb, "/user/hand/left/input/trackpad/click"),
             BBIND(OVR_Button_RThumb, "/user/hand/right/input/trackpad/click"),
             TBIND(OVR_Touch_LThumb, "/user/hand/left/input/trackpad/touch"),
             TBIND(OVR_Touch_RThumb, "/user/hand/right/input/trackpad/touch"),
-            BBIND(OVR_Button_Home, "/user/hand/left/input/system/click"),
-            BBIND(OVR_Button_Home, "/user/hand/right/input/system/click"),
+
+            // Only if has_XR_EXT_dpad_binding:
+            BBIND(OVR_Button_Up, "/user/hand/left/input/trackpad/dpad_up"),
+            BBIND(OVR_Button_Up, "/user/hand/right/input/trackpad/dpad_up"),
+            BBIND(OVR_Button_Down, "/user/hand/left/input/trackpad/dpad_down"),
+            BBIND(OVR_Button_Down, "/user/hand/right/input/trackpad/dpad_down"),
+            BBIND(OVR_Button_Left, "/user/hand/left/input/trackpad/dpad_left"),
+            BBIND(OVR_Button_Left, "/user/hand/right/input/trackpad/dpad_left"),
+            BBIND(OVR_Button_Right, "/user/hand/left/input/trackpad/dpad_right"),
+            BBIND(OVR_Button_Right, "/user/hand/right/input/trackpad/dpad_right"),
         };
 
-        if (!suggestXRInteractionBindings(xrInstance, "/interaction_profiles/htc/vive_controller", ARRAY_SIZE(viveBinding), viveBinding))
+        // Only add last 8 entries if has_XR_EXT_dpad_binding is available:
+        if (!suggestXRInteractionBindings(xrInstance, "/interaction_profiles/htc/vive_controller",
+            has_XR_EXT_dpad_binding ? ARRAY_SIZE(viveBinding) : ARRAY_SIZE(viveBinding) - 8, viveBinding))
             return(FALSE);
     }
 
@@ -1639,7 +1666,7 @@ static psych_bool createDefaultXRInputConfig(XrInstance xrInstance)
             BBIND(OVR_Button_VolDown, "/user/head/input/volume_down/click"),
             BBIND(OVR_Button_VolUp, "/user/head/input/volume_up/click"),
             BBIND(OVR_Button_MicMute, "/user/head/input/mute_mic/click"),
-            BBIND(OVR_Button_Home, "/user/head/input/system/click"),
+            BBIND(OVR_Button_Home, "/user/head/input/system/click"),            // Does not work on SteamVR.
         };
 
         if (!suggestXRInteractionBindings(xrInstance, "/interaction_profiles/htc/vive_pro", ARRAY_SIZE(viveProBinding), viveProBinding))
@@ -2043,7 +2070,7 @@ void PsychOpenXRCheckInit(psych_bool dontfail)
     }
 
     if (verbosity >= 4)
-        printf("PsychOpenXRCore-INFO: At startup there are %i OpenXR instance extensions available.\n", instanceExtensionsCount);
+        printf("PsychOpenXRCore-INFO: At startup there are %i OpenXR instance extensions available:\n", instanceExtensionsCount);
 
     XrExtensionProperties *instanceExtensions = malloc(sizeof(XrExtensionProperties) * instanceExtensionsCount);
     for (i = 0; i < instanceExtensionsCount; i++) {
@@ -2058,6 +2085,13 @@ void PsychOpenXRCheckInit(psych_bool dontfail)
 
         free(instanceExtensions);
         goto instance_init_out;
+    }
+
+    if (verbosity >= 4) {
+        for (i = 0; i < instanceExtensionsCount; i++)
+            printf("PsychOpenXRCore-INFO: %i. instance extension '%s'.\n", i, instanceExtensions[i].extensionName);
+
+        printf("\n");
     }
 
     // Check if minimum set of required instance extensions exist and enable/request them, if so:
@@ -2090,6 +2124,14 @@ void PsychOpenXRCheckInit(psych_bool dontfail)
     has_XR_EXT_hp_mixed_reality_controller = addInstanceExtension(instanceExtensions, instanceExtensionsCount, XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME);
     has_XR_HTC_vive_cosmos_controller_interaction = addInstanceExtension(instanceExtensions, instanceExtensionsCount, XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME);
     has_XR_HTC_vive_focus3_controller_interaction = addInstanceExtension(instanceExtensions, instanceExtensionsCount, XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME);
+
+    // Enable basic eye tracking extension:
+    has_XR_EXT_eye_gaze_interaction = addInstanceExtension(instanceExtensions, instanceExtensionsCount, XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
+
+    // XR_KHR_binding_modification supported? If so, try to enable extensions which depend on it:
+    if (addInstanceExtension(instanceExtensions, instanceExtensionsCount, XR_KHR_BINDING_MODIFICATION_EXTENSION_NAME)) {
+        has_XR_EXT_dpad_binding = addInstanceExtension(instanceExtensions, instanceExtensionsCount, XR_EXT_DPAD_BINDING_EXTENSION_NAME);
+    }
 
     // Done enumerating instance extensions:
     free(instanceExtensions);
@@ -2380,6 +2422,8 @@ void PsychOpenXRCoreInit(void) {
     }
 
     for (handle = 0 ; handle < MAX_PSYCH_OPENXR_DEVS; handle++) {
+        memset(&eyeGazeAvailable[handle], 0, sizeof(eyeGazeAvailable[0]));
+        eyeGazeAvailable[handle].type = XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT;
         memset(&availableSystems[handle], 0, sizeof(availableSystems[0]));
         availableSystems[handle].type = XR_TYPE_SYSTEM_PROPERTIES;
     }
@@ -2454,8 +2498,8 @@ PsychError PSYCHOPENXRGetCount(void)
 
 PsychError PSYCHOPENXROpen(void)
 {
-    static char useString[] = "[openxrPtr, modelName, runtimeName] = PsychOpenXRCore('Open' [, deviceIndex=0]);";
-    //                          1          2          3                                        1
+    static char useString[] = "[openxrPtr, modelName, runtimeName, hasEyeTracking] = PsychOpenXRCore('Open' [, deviceIndex=0]);";
+    //                          1          2          3            4                                           1
     static char synopsisString[] =
         "Open connection to OpenXR device, return a 'openxrPtr' handle to it.\n\n"
         "The call tries to open the device with index 'deviceIndex', or the first detected "
@@ -2464,7 +2508,8 @@ PsychError PSYCHOPENXROpen(void)
         "that zero is the only valid value.\n"
         "The returned handle can be passed to the other subfunctions to operate the device.\n"
         "'modelName' returns the model name string of the OpenXR device.\n"
-        "'runtimeName' returns the name of the OpenXR runtime.\n";
+        "'runtimeName' returns the name of the OpenXR runtime.\n"
+        "'hasEyeTracking' returns the level of eye tracking support: 0 = None, 1 = Basic.\n";
     static char seeAlsoString[] = "GetCount Close";
 
     PsychOpenXRDevice* openxr;
@@ -2477,7 +2522,7 @@ PsychError PSYCHOPENXROpen(void)
     if (PsychIsGiveHelp()) { PsychGiveHelp(); return(PsychError_none); };
 
     // Check to see if the user supplied superfluous arguments:
-    PsychErrorExit(PsychCapNumOutputArgs(3));
+    PsychErrorExit(PsychCapNumOutputArgs(4));
     PsychErrorExit(PsychCapNumInputArgs(1));
 
     // Make sure driver is initialized:
@@ -2514,13 +2559,16 @@ PsychError PSYCHOPENXROpen(void)
     // Try to create and setup a xrSession for the xrSystem device with 'deviceIndex':
     openxr->systemId = availableSystems[deviceIndex].systemId;
 
+    // Record if basic eye gaze tracking is available:
+    openxr->hasEyeTracking = eyeGazeAvailable[deviceIndex].supportsEyeGazeInteraction ? 1 : 0;
+
     // Use a fixed stereo view type by default for now, for typical HMD use:
     openxr->viewType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
 
     // Stats for nerds:
     if (verbosity >= 3) {
         printf("PsychOpenXRCore-INFO: Opened OpenXR device with deviceIndex %i as handle %i.\n", deviceIndex, handle + 1);
-        printf("PsychOpenXRCore-INFO: Product: \"%s\" - [VendorId: 0x%x]\n", availableSystems[deviceIndex].systemName, availableSystems[deviceIndex].vendorId);
+        printf("PsychOpenXRCore-INFO: Product: \"%s\" - [VendorId: 0x%x eyeTracking: %i]\n", availableSystems[deviceIndex].systemName, availableSystems[deviceIndex].vendorId, openxr->hasEyeTracking);
         printf("PsychOpenXRCore-INFO: ----------------------------------------------------------------------------------\n");
     }
 
@@ -2558,6 +2606,9 @@ PsychError PSYCHOPENXROpen(void)
 
     // Return OpenXR runtime name:
     PsychCopyOutCharArg(3, kPsychArgOptional, (const char*) instanceProperties.runtimeName);
+
+    // Return eye tracking support level:
+    PsychCopyOutDoubleArg(4, kPsychArgOptional, openxr->hasEyeTracking);
 
     return(PsychError_none);
 }
@@ -4103,6 +4154,13 @@ PsychError PSYCHOPENXRCreateAndStartSession(void)
     openxr->originPoseInPreviousSpace = identityPose;
     openxr->worldSpaceType = refSpaceCreateInfo.referenceSpaceType;
 
+    for (i = 0; i < 2; i++) {
+        // These are used to receive head/eye position + orientation information from 3D 6-DoF head tracking
+        // and possibly eye tracking later on to establish the virtual cameras location/pose/FoV:
+        openxr->view[i].type = XR_TYPE_VIEW;
+        openxr->view[i].next = NULL;
+    }
+
     // TODO: Could have setup of alternate action sets / actions / interaction profile bindings under
     // control of future API and user scripts here, to use as alternative to the setup made in
     // createDefaultXRInputConfig()?
@@ -4521,12 +4579,7 @@ PsychError PSYCHOPENXRCreateRenderTextureChain(void)
     openxr->textureHeight = height;
     openxr->numMSAASamples = numMSAASamples;
 
-    // Initialize views, projection views and quad views with what can be statically initialized:
-
-    // These are used to receive head/eye position + orientation information from 3D 6-DoF head tracking
-    // and possibly eye tracking later on to establish the virtual cameras location/pose/FoV:
-    openxr->view[eyeIndex].type = XR_TYPE_VIEW;
-    openxr->view[eyeIndex].next = NULL;
+    // Initialize projection views and quad views with what can be statically initialized:
 
     // Quad views are used for monoscopic or stereoscopic rendering usually without taking
     // head tracking / pose into account. These quads float in a head-locked fixed position
@@ -4970,7 +5023,7 @@ static double PresentExecute(PsychOpenXRDevice *openxr, psych_bool inInit)
         // To my current knowledge, only Monado handles frameEndInfo.displayTime properly, so all other
         // runtimes need a manual wait here:
         if ((openxr->targetPresentTime < DBL_MAX) && !strstr(instanceProperties.runtimeName, "Monado"))
-            PsychWaitUntilSeconds(openxr->targetPresentTime);
+            PsychWaitUntilSeconds(openxr->targetPresentTime - openxr->frameDuration);
 
         // If targetDisplayTime is earlier than earliest next possible display time predictedDisplayTime, then set it
         // to earliest possible display time. This is crucial for xrEndFrame() to not fail completely under SteamVR:
@@ -5495,7 +5548,7 @@ PsychError PSYCHOPENXRHapticPulse(void)
     int handle;
     psych_int64 controllerType;
     PsychOpenXRDevice *openxr;
-    double duration, tNow, freq, amplitude, pulseEndTime;
+    double duration, freq, amplitude, pulseEndTime;
     XrPath outpath;
     XrResult result;
 
@@ -5621,7 +5674,6 @@ PsychError PSYCHOPENXRHapticPulse(void)
 
     // Predict "off" time:
     PsychGetAdjustedPrecisionTimerSeconds(&pulseEndTime);
-    tNow = pulseEndTime;
     pulseEndTime += duration;
     PsychCopyOutDoubleArg(1, kPsychArgOptional, pulseEndTime);
 
