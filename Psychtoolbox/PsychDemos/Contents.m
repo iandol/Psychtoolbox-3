@@ -89,6 +89,7 @@
 %    MovingLineDemo          - Shows some horizontally moving lines to demonstrate flat panel display artifacts.
 %    MultiTouchDemo          - Shows how to get (multi-)touch input from touchscreens and touchpads.
 %    MultiTouchMinimalDemo   - Shows a more minimal example of how to get (multi-)touch input from touchscreens and touchpads.
+%    MultiTouchPinchDemo     - Shows how to detect and handle a two-finger pinch gesture on a touchscreen.
 %    NomogramDemo            - Compute photoreceptor nomograms.
 %    OldNewRecogExp          - A full old-new recognition experiment.
 %    OpenEXRImages           - Subfolder: OpenEXR HDR sample image files.
@@ -110,7 +111,7 @@
 %    RenderDemo              - Render CIE xyY as a color patch.
 %    SadowskiDemo            - Shows the "Sadowski" color afterimage effect.
 %    SimpleHDRDemo           - Minimal demo for using a HDR display, showing some basic stimuli.
-%    SimpleHDRLinuxStereoDemo -Like SimpleHDRDemo, but with Linux/X11 stereo hack for stereoscopic HDR stimulation.
+%    SimpleHDRLinuxStereoDemo - Like SimpleHDRDemo, but with Linux/X11 stereo hack for stereoscopic HDR stimulation.
 %    SimpleImageMixingDemo   - Shows how to mix two images via alpha-blending, using an alpha-mask which itself is morphed between two masks.
 %                              See also ImageMixingTutorial for a more complex demonstration of the technique.
 %    SimpleSoundScheduleDemo - Simple demo for basic use of sound schedules with PsychPortAudio.
