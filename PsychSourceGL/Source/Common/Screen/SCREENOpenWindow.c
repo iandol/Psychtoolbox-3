@@ -1027,19 +1027,20 @@ PsychError SCREENOpenWindow(void)
             // Cocoa:
             double isf = PsychCocoaGetBackingStoreScaleFactor(windowRecord->targetSpecific.windowHandle);
 
-            if (PsychPrefStateGet_Verbosity() > 3)
-                printf("PTB-INFO: Cocoa + Retina scaling. Scaling factor is %fx.\n", isf);
-
             if (windowRecord->imagingMode & kPsychNeedGPUPanelFitter) {
                 // Cocoa + Panelfitter enabled:
                 windowRecord->internalMouseMultFactor = 1.0;
-                windowRecord->externalMouseMultFactor = isf;
+                windowRecord->externalMouseMultFactor = (isf != 1) ? isf / 2 : -1.0;
             }
             else {
                 // Cocoa with Panelfitter off:
                 windowRecord->internalMouseMultFactor = isf;
-                windowRecord->externalMouseMultFactor = 1.0;
+                windowRecord->externalMouseMultFactor = (isf != 1) ? 1.0 / 2 : -1.0;
             }
+
+            if (PsychPrefStateGet_Verbosity() > 3)
+                printf("PTB-INFO: Cocoa + Retina scaling. Window scaling factor is %fx. Mouse scaling is internal %fx and external %fx\n",
+                       isf, windowRecord->internalMouseMultFactor, windowRecord->externalMouseMultFactor);
 
             // Graphics api interop setup under Cocoa, e.g., for Vulkan MoltenVK interop.
             // This is the point where we transition from OpenGL rendering and display to
@@ -1064,12 +1065,12 @@ PsychError SCREENOpenWindow(void)
                            frontendwidth, frontendheight, nativewidth, nativeheight, autoscale);
 
                 windowRecord->internalMouseMultFactor = 1 / autoscale;
-                windowRecord->externalMouseMultFactor = autoscale;
+                windowRecord->externalMouseMultFactor = -autoscale;
             }
             else {
                 // CGL with Panelfitter off:
                 windowRecord->internalMouseMultFactor = 1.0;
-                windowRecord->externalMouseMultFactor = 1.0;
+                windowRecord->externalMouseMultFactor = -1.0;
             }
         }
     #endif

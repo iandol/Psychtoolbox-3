@@ -59,6 +59,7 @@ function SetMouse(x,y,windowPtrOrScreenNumber, mouseid, detachFromMouse)
 % 04/18/15  mk      Update help text - local coordinates now should also
 %                   work on MS-Windows, not only Linux and OSX.
 % 07/20/15  mk      Add support for 'detachFromMouse', on OSX for now.
+% 03/01/26  mk      Adapt to new macOS Retina handling.
 
 % SetMouse.m wraps the Screen('PositionCursor',..) call to emulate the old SetMouse.mex
 
@@ -81,14 +82,7 @@ end
 % OSX handling of Retina displays:
 if IsOSX && (Screen('WindowKind', windowPtrOrScreenNumber) == 1)
     winfo = Screen('GetWindowInfo', windowPtrOrScreenNumber);
-    if ~winfo.IsFullscreen || (Screen('Preference', 'WindowShieldingLevel') < 2000) || winfo.SysWindowHandle > 0
-        % Cocoa - Half the factor is right:
-        isf = winfo.ExternalMouseMultFactor / 2;
-    else
-        % CGL fullscreen:
-        isf = winfo.ExternalMouseMultFactor;
-    end
-
+    isf = abs(winfo.ExternalMouseMultFactor);
     x = x * isf;
     y = y * isf;
 end
