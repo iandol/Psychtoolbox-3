@@ -65,43 +65,54 @@ if nargin > 0 && isscalar(cmd) && isnumeric(cmd)
 
             % Inject predictedOnset == visual stimulus onset time into Screen(), for usual handling
             % and reporting back to usercode via Screen('Flip'):
-            Screen('Hookfunction', win, 'SetOneshotFlipResults', '', predictedOnset);
+            Screen('Hookfunction', win, 'SetOneshotFlipResults', '', max(predictedOnset, 0));
         else
             % No. Need to use fallback with the help of Screen():
+            if ~IsWayland
+                % Assign this windows usedOutput as rank 0 output setting in Screen:
+                % This affects beamposition based Vblank timestamping and Beamposition
+                % in Screen('GetWindowInfo'), so we query scanout position of the correct
+                % display engine for this win'dow:
+                outputIndex = vulkan{win}.usedOutput;
+                if ~isempty(outputIndex)
+                    screenId = vulkan{win}.screenId;
+                    Screen('Preference', 'ScreenToHead', screenId, outputMappings{screenId + 1}(1, outputIndex + 1), outputMappings{screenId + 1}(2, outputIndex + 1), 0);
+                end
 
-            % Assign this windows usedOutput as rank 0 output setting in Screen:
-            % This affects beamposition based Vblank timestamping and Beamposition
-            % in Screen('GetWindowInfo'), so we query scanout position of the correct
-            % display engine for this win'dow:
-            outputIndex = vulkan{win}.usedOutput;
-            screenId = vulkan{win}.screenId;
-            if ~isempty(outputIndex)
-                Screen('Preference', 'ScreenToHead', screenId, outputMappings{screenId + 1}(1, outputIndex + 1), outputMappings{screenId + 1}(2, outputIndex + 1), 0);
+                % Perform a blocking Vulkan Present operation of the rendered interop image
+                % to the display of Vulkan window vwin associated with onscreen window win.
+                %
+                % vblTime is the visual stimulus onset time, as computed by PsychVulkanCore's
+                % own timestamping. This would only be accurate if the underlying Vulkan driver
+                % supported high-precision timestamping, which it doesn't if we are in this path.
+                % Therefore it is a simple GetSecs() style approximation:
+                vblTime = PsychVulkanCore('Present', vwin, tWhen, doTimestamp);
+
+                % As long as we don't have high precision timestamp support in PsychVulkanCore,
+                % use Screen()'s VBLANK timestamps as reasonably accurate and mostly reliable surrogate:
+                winfo = Screen('GetWindowInfo', win, 7);
+
+                % Restore rank 0 output setting in Screen:
+                if ~isempty(outputIndex)
+                    Screen('Preference', 'ScreenToHead', screenId, outputMappings{screenId + 1}(1, 1), outputMappings{screenId + 1}(2, 1), 0);
+                end
+
+                % predictedOnset is the last known vbl timestamp from Screen():
+                predictedOnset = winfo.LastVBLTime;
+                beamPosition = winfo.Beamposition;
+            else
+                % On Wayland we can piggyback on Screen's internal Wayland timestamping.
+
+                % Perform blocking present - should block until present complete:
+                vblTime = PsychVulkanCore('Present', vwin, tWhen, doTimestamp);
+
+                % Retrieve corresponding Screen() timestamp:
+                predictedOnset = Screen('GetFlipInfo', win, 5);
+                beamPosition = [];
             end
-
-            % Perform a blocking Vulkan Present operation of the rendered interop image
-            % to the display of Vulkan window vwin associated with onscreen window win.
-            %
-            % vblTime is the visual stimulus onset time, as computed by PsychVulkanCore's
-            % own timestamping. This would only be accurate if the underlying Vulkan driver
-            % supported high-precision timestamping, which it doesn't if we are in this path.
-            % Therefore it is a simple GetSecs() style approximation:
-            vblTime = PsychVulkanCore('Present', vwin, tWhen, doTimestamp);
-
-            % As long as we don't have high precision timestamp support in PsychVulkanCore,
-            % use Screen()'s VBLANK timestamps as reasonably accurate and mostly reliable surrogate:
-            winfo = Screen('GetWindowInfo', win, 7);
-
-            % Restore rank 0 output setting in Screen:
-            if ~isempty(outputIndex)
-                Screen('Preference', 'ScreenToHead', screenId, outputMappings{screenId + 1}(1, 1), outputMappings{screenId + 1}(2, 1), 0);
-            end
-
-            % predictedOnset is the last known vbl timestamp from Screen():
-            predictedOnset = winfo.LastVBLTime;
 
             % If predictedOnset is valid and not stale, use it. Otherwise fall back to vblTime:
-            if (predictedOnset > 0) && (predictedOnset ~= vulkan{win}.LastVBLTime)
+            if doTimestamp && (predictedOnset > 0) && (predictedOnset ~= vulkan{win}.LastVBLTime)
                 vblTime = predictedOnset;
             else
                 predictedOnset = vblTime;
@@ -111,12 +122,17 @@ if nargin > 0 && isscalar(cmd) && isnumeric(cmd)
 
             % Inject vblTime and visual stimulus onset time into Screen(), for usual handling
             % and reporting back to usercode via Screen('Flip'), also current beamposition:
-            Screen('Hookfunction', win, 'SetOneshotFlipResults', '', vblTime, predictedOnset, [], winfo.Beamposition);
+            Screen('Hookfunction', win, 'SetOneshotFlipResults', '', max(vblTime, 0), max(predictedOnset, 0), [], beamPosition);
+        end
+
+        if IsWayland
+            % Do a Rect query to trigger Wayland event processing, and potential error handling:
+            Screen('Rect', win);
         end
 
         return;
     end
-    
+
     if cmd == 1
         % Vulkan window close operation, closes the Vulkan onscreen window associated with
         % a PTB onscreen window. Called from Screen('Close', win) and Screen('CloseAll') as
@@ -168,6 +184,7 @@ if nargin > 0 && isscalar(cmd) && isnumeric(cmd)
 
         % Present and maybe get an ok precision and not too unreliable timestamp from Vulkan driver:
         predictedOnset = PsychVulkanCore('Present', vwin, tWhen, doTimestamp);
+        vblTime = GetSecs;
 
         % Get a second opinion on onset time from Screen's VBLANK timestamping:
         winfo = Screen('GetWindowInfo', win, 7);
@@ -176,15 +193,12 @@ if nargin > 0 && isscalar(cmd) && isnumeric(cmd)
         if (winfo.VBLEndline > 0) && (winfo.LastVBLTime > 0)
             % Yes. Assign:
             vblTime = winfo.LastVBLTime;
-        else
-            % No. Fallback to GetSecs as a noisy last resort:
-            vblTime = GetSecs;
         end
 
         % If predictedOnset is valid, use it. Otherwise fall back to vblTime:
         if predictedOnset > 0
             % Valid timestamp from Vulkan? Validate a bit and warn if not:
-            if (verbosity > 4) || ((verbosity > 1) && (winfo.VBLEndline > 0) && (abs(predictedOnset - vblTime) > 0.001))
+            if (verbosity > 6) || ((verbosity > 1) && (winfo.VBLEndline > 0) && (abs(predictedOnset - vblTime) > 0.001))
                 fprintf('PsychVulkan-DEBUG: Delta between Vulkan and reference timestamps is %f usecs.\n', 1e6 * (predictedOnset - vblTime));
             end
 
@@ -286,7 +300,7 @@ if strcmpi(cmd, 'Supported')
     if isempty(supported)
         try
             if exist('PsychVulkanCore', 'file') && (PsychVulkanCore('GetCount') > 0) && ...
-               (~IsOSX || IsMinimumOSXVersion(10,15,4)) % macOS 10.15.4 is the bare minimum needed.
+               (~IsOSX || IsMinimumOSXVersion(11, 0, 0)) % macOS 11 is the bare minimum needed.
                 supported = 1;
             else
                 supported = 0;
@@ -426,7 +440,11 @@ if strcmpi(cmd, 'OpenWindowSetup')
         % Not Linux X11: Linux DRM/KMS VT, Linux Wayland, MS-Windows etc.
         if isempty(winRect)
             % No winRect given: Means fullscreen on a specific monitor, defined by screenId:
-            winRect = Screen('GlobalRect', screenId);
+            if ~IsWayland && ~IsOSX
+                % Must only assign this on non-Wayland and non-macOS, or Retina compatibility will go sideways:
+                winRect = Screen('GlobalRect', screenId);
+            end
+
             outputName = 1;
             outputIndex = 0;
         else
@@ -435,6 +453,10 @@ if strcmpi(cmd, 'OpenWindowSetup')
                 % Yes: Fullscreen display:
                 outputName = 1;
                 outputIndex = 0;
+                % Must clear winRect on Wayland and macOS for proper Retina handling:
+                if IsWayland || IsOSX
+                    winRect = [];
+                end
             else
                 % No: Windowed non-fullscreen window:
                 outputName = [];
@@ -442,7 +464,7 @@ if strcmpi(cmd, 'OpenWindowSetup')
             end
         end
 
-        if ~isempty(outputName) && ((verbosity >= 4) || (~(IsOSX && IsARM(1)) && (verbosity == 3)))
+        if ~IsWayland && length(winRect) == 4 && ~isempty(outputName) && ((verbosity >= 4) || (~(IsOSX && IsARM(1)) && (verbosity == 3)))
             fprintf('PsychVulkan-INFO: Onscreen window at rect [%i, %i, %i, %i] is aligned with fullscreen exclusive output for screenId %i.\n', ...
                     winRect(1), winRect(2), winRect(3), winRect(4), screenId);
         end
@@ -546,6 +568,20 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
     % Restore rank 0 output setting in Screen:
     Screen('Preference', 'ScreenToHead', screenId, outputMappings{screenId + 1}(1, 1), outputMappings{screenId + 1}(2, 1), 0);
 
+    % Mesa zink OpenGL driver in use on Linux? zink does not support OpenGL-Vulkan
+    % interop images with a tiled layout, so we must force-disable tiling and instead
+    % use a linear layout:
+    if IsLinux && ~isempty(strfind(winfo.GLRenderer, 'zink'))
+        flags = mor(flags, 4);
+    end
+
+    % On Linux with Wayland, always use "windowed" mode setup, even for fullscreen windows,
+    % as all the wl_surface setup, also for fullscreen mode, was already done by Screen(),
+    % and we currently do not use Wayland / DRM-KMS output leasing:
+    if IsLinux && IsWayland
+        isFullscreen = 0;
+    end
+
     % NVidia gpu under Linux/X11 with NVIDIA proprietary driver? And onscreen window fills complete target X-Screen?
     % Or this is a single-output display NVidia Optimus PRIME render offload setup, where NVIDIA's RandR output leasing does not work?
     if IsLinux && ~IsWayland && ~isempty(strfind(winfo.GLVendor, 'NVIDIA')) && ...
@@ -571,6 +607,10 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
         % non-fs-exclusive mode and accept broken timing and potentially
         % impaired HDR - what choice do we have?! The bug still exists
         % as of version 23.11.1, aka raw 8388887, from November 2023.
+        % Update: It still exists end of January 2026 with the latest AMD
+        % Adrenalin 26.1.1 drivers. I think we can give up on AMD ever
+        % fixing this crap at least for older gpu's like my RavenRidge from
+        % February 2018.
         badFSEIds = hex2dec({'67EF'});
         for i=1:length(devs)
             if (devs(i).VendorId == 4098) && strcmp(winfo.GLRenderer, devs(i).GpuName) && ...
@@ -603,6 +643,7 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
             for i=1:length(devs)
                 if ~ismember(devs(i).DriverId, [1, 2, 3, 4, 14])
                     gpuIndex = devs(i).DeviceIndex;
+                    % Choose last viable index for test mode: break;
                 end
             end
         end
@@ -617,15 +658,17 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
             % frame of extra latency, but our measurements show that even
             % without it, there is one frame of extra latency, contrary to
             % what the docs wrt. Direct-to-Display mode say.
-            % On macOS 13.3.1, it is still broken, but different: The one
-            % frame latency is gone, but now stimulus onset scheduling is
-            % broken whenever a flip is more than 2 frames in the future!
+            % On macOS 13.7.8 Ventura final update, it is still broken,
+            % but different: The one frame latency is gone, but now
+            % stimulus onset scheduling is broken whenever a flip is more
+            % than 2 frames in the future!
             %
-            % On macOS 14.4+ on Apple M1, it seems to work reasonably well,
-            % apart from the sporadic failure during the first few
-            % presents, so there's some hope. Not yet tested thoroughly
-            % yet, but lets activate this mode on Apple Silicon for now.
-            % Broken stuff all around on the iToys operating system:
+            % On macOS 14.4+ (tested on Apple M1/M2 Pro), it seems to work
+            % reasonably well, apart from the sporadic failure during the
+            % first few presents, so there's some hope. Not yet tested
+            % thoroughly yet, but lets activate this mode on Apple Silicon
+            % for now. Broken stuff all around on the iToys operating
+            % system:
             if ~IsARM(1)
                 flags = mor(flags, 2);
             end
@@ -715,8 +758,9 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
                 oldbpc = bpc;
             end
         else
-            % On Linux in windowed mode, outputHandle encodes the X11 window handle of
-            % the PTB onscreen window, which we will use for the Vulkan display:
+            % On Linux in windowed mode, outputHandle encodes the X11 window handle
+            % or Wayland wl_surface backing surface of the PTB onscreen window,
+            % which we will use for the Vulkan display:
             outputHandle = uint64(winfo.SysWindowHandle);
 
             % TODO XXX: Should we calculate refreshHz per output or from FlipInterval instead?
@@ -727,7 +771,7 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
             % kPsychExternalDisplayMethod mode. It is stored in SysWindowInteropHandle:
             outputHandle = uint64(winfo.SysWindowInteropHandle);
         else
-            % On Windows, outputHandle is meaningless atm.:
+            % On Windows, outputHandle provides the HWND of the Screen onscreen window:
             outputHandle = uint64(winfo.SysWindowHandle);
         end
 
@@ -742,6 +786,21 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
                 error('Failed to open Vulkan window: Tried to open fullscreen-exclusive output on screenId %i, but that one is already in use.', screenId);
             end
         end
+    end
+
+    % On Linux, this encodes the display server client connection handle, ie.
+    % X-Display handle on X11, wl_display on Wayland. Right now, this is only
+    % used on Linux+Wayland. On macOS the info is redundant and already provided
+    % as outputHandle (see above), on MS-Windows the info is unused:
+    if IsWayland
+        displayHandle = uint64(winfo.SysWindowInteropHandle);
+
+        % Override windowRect of Vulkan window to effective size of Screen 'win'dow,
+        % so Retina handling works correctly in both native resolution and scaled
+        % Retina compatibility mode:
+        windowRect = Screen('Rect', win, 1);
+    else
+        displayHandle = uint64(0);
     end
 
     % Get the UUID of the Vulkan device that is compatible with our associated
@@ -765,7 +824,9 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
             system(sprintf('xrandr --screen %i --output %s --off ; sleep 1', screenId, outputName));
         end
 
-        if hdrMode
+        % Special gamma table setup for HDR mode, except when Wayland is used for display, where
+        % we currently can not control gamma tables, so skip it.
+        if hdrMode && ~IsWayland
             % We want an identity hardware gamma lut in HDR, but at maximum lut precision,
             % so output does not get truncated to 8 bpc. Therefore we can't use LoadIdentityClut()
             % which is aimed at 8 bpc identity pixel passthrough.
@@ -811,7 +872,7 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
         end
 
         % Open the Vulkan window:
-        vwin = PsychVulkanCore('OpenWindow', gpuIndex, targetUUID, isFullscreen, screenId, windowRect, outputHandle, hdrMode, colorPrecision, refreshHz, colorSpace, colorFormat, flags);
+        vwin = PsychVulkanCore('OpenWindow', gpuIndex, targetUUID, isFullscreen, screenId, windowRect, outputHandle, hdrMode, colorPrecision, refreshHz, colorSpace, colorFormat, flags, displayHandle);
 
         % No interop, or semaphores unsupported?
         if noInterop || isempty(strfind(glGetString(GL.EXTENSIONS), 'GL_EXT_semaphore')) %#ok<STREMP>
@@ -895,8 +956,7 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
     % Set it up:
     if ~noInterop
         if IsOSX
-            oldtex = Screen('Hookfunction', win, 'SetDisplayBufferTextures', [], double(interopObjectHandle), [], GL.TEXTURE_RECTANGLE, internalFormat, 0, width, height);
-            glDeleteTextures(1, oldtex); % Get rid of now unused old texture.
+            Screen('Hookfunction', win, 'SetDisplayBufferTextures', [], double(interopObjectHandle), [], GL.TEXTURE_RECTANGLE, internalFormat, 0, width, height, 1);
         else
             Screen('Hookfunction', win, 'ImportDisplayBufferInteropMemory', [], 0, interopObjectHandle, allocationSize, internalFormat, tilingMode, memoryOffset, width, height, renderCompleteSemaphore);
         end
@@ -948,6 +1008,13 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
 
     % Store for win'dow if Vulkan driver supports high-precision timing and timestamping natively:
     vulkan{win}.SupportsTiming = devs(gpuIndex).SupportsTiming;
+
+    % If we are running on top of a Wayland display server and the Vulkan driver doesn't support
+    % native timing, we can piggyback on Screen's internal Wayland timestamping on most compositors,
+    % with some setup in place:
+    if ~vulkan{win}.SupportsTiming && IsWayland
+        Screen('GetFlipInfo', win, 4);
+    end
 
     % Interop enabled. Set up callbacks from Screen() imaging pipeline into our driver:
 
@@ -1002,6 +1069,24 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
     usedOutputs{screenId + 1} = union(usedOutputs{screenId + 1}, usedOutput);
 
     varargout{1} = vwin;
+
+    % Set benchmark to a non-zero value to run a benchmark with 'benchmark'
+    % samples, trying to present as fast as possible with minimal overhead:
+    benchmark = 0;
+    if benchmark
+        t = zeros(1, benchmark); %#ok<UNRCH>
+        for i = 1:benchmark
+            t(i) = PsychVulkanCore('Present', vwin, 0, 2);
+        end
+        t = 1000 * diff(t);
+        plot(t);
+        title('Interval between presents in msecs:');
+        tmin = min(t);
+        tmax = max(t);
+        tmedian = median(t);
+        fprintf('PsychVulkan-BENCHMARK: Fastest benchmark possible, with aiming for a present every video refresh cycle: n=%i min=%f ms, max=%f ms, median=%f ms.\n', ...
+                benchmark, tmin, tmax, tmedian);
+    end
 
     return;
 end

@@ -41,9 +41,6 @@
 
 #include "Screen.h"
 
-// Need AGL headers for windowed and multi-screen rendering:
-#include <AGL/agl.h>
-
 // Includes for low-level access to IOKit Framebuffer device:
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>
@@ -349,7 +346,7 @@ psych_bool PsychOSOpenOnscreenWindow(PsychScreenSettingsType *screenSettings, Ps
     // Matlab or Octave are running in command line only mode inside a terminal window, where the hosting Terminal.app is
     // a separate GUI process, or when Matlab R2025a+ is used, which implements its JavaScript GUI in a separate process
     // from the PTB hosting process:
-    if (useCGL && (!PsychCocoaCreateGhostWindow(TRUE)) && (PsychPrefStateGet_Verbosity() > 1)) {
+    if (useCGL && !PsychCocoaCreateGhostWindow(TRUE, screenSettings->screenNumber) && (PsychPrefStateGet_Verbosity() > 1)) {
         printf("PTB-WARNING: Could not create Cocoa ghost window for suppressing annoying keypress beeps. Cover your ears.\n");
     }
 
@@ -497,7 +494,7 @@ psych_bool PsychOSOpenOnscreenWindow(PsychScreenSettingsType *screenSettings, Ps
 
     // Possible to request use of the Apple floating point software renderer:
     if (conserveVRAM & kPsychUseSoftwareRenderer) {
-        attribs[attribcount++]=AGL_RENDERER_ID;
+        attribs[attribcount++]=kCGLPFARendererID;
         attribs[attribcount++]=kCGLRendererGenericFloatID;
     }
 
@@ -979,7 +976,7 @@ void PsychOSCloseWindow(PsychWindowRecordType *windowRecord)
         PsychShowCursor(windowRecord->screenNumber, 0);
 
         // Destroy potentially existing ghost window:
-        PsychCocoaCreateGhostWindow(FALSE);
+        PsychCocoaCreateGhostWindow(FALSE, 0);
     }
 
     return;

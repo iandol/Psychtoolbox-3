@@ -502,26 +502,42 @@ PsychError SCREENOpenWindow(void)
         if ((nativewidth > frontendwidth) || (nativeheight > frontendheight)) {
             // Yes: Native backend resolution in pixels is higher than exposed
             // frontend resolution in points. --> HiDPI / Retina display in use.
-            if (PsychPrefStateGet_Verbosity() > 2)
-                printf("PTB-INFO: Retina display. Enabling panel fitter for scaled Retina compatibility mode.\n");
-
-            if (!EmulateOldPTB) {
-                // Enable panel fitter by setting a clientRect the size and resolution
-                // of the 'rect' - user supplied or frontend resolution.
-                // NOTE: This is preliminary! The setup code below will override
-                // such an auto-generated clientRect with the fbOverrideRect, as
-                // provided by the usercode, or computed from 'rect':
-                PsychNormalizeRect(rect, clientRect);
-
-                // Enable imaging pipeline and panelfitter:
-                imagingmode |= kPsychNeedFastBackingStore;
-                imagingmode |= kPsychNeedGPUPanelFitter;
+            if (PsychPrefStateGet_Verbosity() > 2) {
+                #ifdef PTB_USE_WAYLAND
+                printf("PTB-INFO: Retina display on screen %i. Using Retina compatibility mode. Use PsychImaging('AddTask','General','UseRetinaResolution') for full resolution.\n",
+                        screenNumber);
+                #else
+                printf("PTB-INFO: Retina display on screen %i. Using panel fitter for Retina compatibility mode. Use PsychImaging('AddTask','General','UseRetinaResolution') for full resolution.\n",
+                        screenNumber);
+                #endif
             }
-            else {
-                printf("PTB-WARNING: Sorry, Retina displays are not supported in OS-9 PTB emulation mode. Results will likely be wrong.\n");
-            }
+
+            // Don't use panel fitter for Retina scaling under Wayland, as we have more efficient
+            // Wayland specific ways to do that implemented in the Linux Wayland glue:'
+            #ifndef PTB_USE_WAYLAND
+                if (!EmulateOldPTB) {
+                    // Enable panel fitter by setting a clientRect the size and resolution
+                    // of the 'rect' - user supplied or frontend resolution.
+                    // NOTE: This is preliminary! The setup code below will override
+                    // such an auto-generated clientRect with the fbOverrideRect, as
+                    // provided by the usercode, or computed from 'rect':
+                    PsychNormalizeRect(rect, clientRect);
+
+                    // Enable imaging pipeline and panelfitter:
+                    imagingmode |= kPsychNeedFastBackingStore;
+                    imagingmode |= kPsychNeedGPUPanelFitter;
+                }
+                else {
+                    printf("PTB-WARNING: Sorry, Retina displays are not supported in Psychtoolbox-2 emulation mode. Results will likely be wrong.\n");
+                }
+            #endif
         }
     }
+
+    // Transfer kPsychNeedRetinaResolution to specialflags for use by WSI backends, e.g., Wayland, to request WSI
+    // setup for full native Retina resolution:
+    if (imagingmode & kPsychNeedRetinaResolution)
+        specialflags |= kPsychNeedRetinaResolution;
 
     // Filter out "used up" flags, they must not pass into PsychOpenOnscreenWindow() or PsychInitializeImagingPipeline(),
     // or they might screw up MSAA or fast offscreen window support:
@@ -1011,19 +1027,20 @@ PsychError SCREENOpenWindow(void)
             // Cocoa:
             double isf = PsychCocoaGetBackingStoreScaleFactor(windowRecord->targetSpecific.windowHandle);
 
-            if (PsychPrefStateGet_Verbosity() > 3)
-                printf("PTB-INFO: Cocoa + Retina scaling. Scaling factor is %fx.\n", isf);
-
             if (windowRecord->imagingMode & kPsychNeedGPUPanelFitter) {
                 // Cocoa + Panelfitter enabled:
                 windowRecord->internalMouseMultFactor = 1.0;
-                windowRecord->externalMouseMultFactor = isf;
+                windowRecord->externalMouseMultFactor = (isf != 1) ? isf / 2 : -1.0;
             }
             else {
                 // Cocoa with Panelfitter off:
                 windowRecord->internalMouseMultFactor = isf;
-                windowRecord->externalMouseMultFactor = 1.0;
+                windowRecord->externalMouseMultFactor = (isf != 1) ? 1.0 / 2 : -1.0;
             }
+
+            if (PsychPrefStateGet_Verbosity() > 3)
+                printf("PTB-INFO: Cocoa + Retina scaling. Window scaling factor is %fx. Mouse scaling is internal %fx and external %fx\n",
+                       isf, windowRecord->internalMouseMultFactor, windowRecord->externalMouseMultFactor);
 
             // Graphics api interop setup under Cocoa, e.g., for Vulkan MoltenVK interop.
             // This is the point where we transition from OpenGL rendering and display to
@@ -1036,20 +1053,41 @@ PsychError SCREENOpenWindow(void)
             // CGL:
             if (windowRecord->imagingMode & kPsychNeedGPUPanelFitter) {
                 // CGL with Panelfitter enabled:
-                double autoscale = (double) nativewidth / (double) frontendwidth;
+                double autoscale;
+
+                // Query new nativewidth after opening onscreen window and possible video mode switching,
+                // so we operate with accurate values:
+                PsychGetScreenPixelSize(screenNumber, &nativewidth, &nativeheight);
+                autoscale = (double) nativewidth / (double) frontendwidth;
 
                 if (PsychPrefStateGet_Verbosity() > 3)
-                    printf("PTB-INFO: CGL + Retina scaling. Auto scale factor is %fx.\n", autoscale);
+                    printf("PTB-INFO: CGL + Retina scaling. [%i x %i] => [%i x %i] => Auto scale factor is %fx.\n",
+                           frontendwidth, frontendheight, nativewidth, nativeheight, autoscale);
 
                 windowRecord->internalMouseMultFactor = 1 / autoscale;
-                windowRecord->externalMouseMultFactor = autoscale;
+                windowRecord->externalMouseMultFactor = -autoscale;
             }
             else {
                 // CGL with Panelfitter off:
                 windowRecord->internalMouseMultFactor = 1.0;
-                windowRecord->externalMouseMultFactor = 1.0;
+                windowRecord->externalMouseMultFactor = -1.0;
             }
         }
+    #endif
+
+    #ifdef PTB_USE_WAYLAND
+    // Handle Wayland specific mouse / touch position coordinate rescaling from wl_surface local coordinates
+    // to wl_buffer aka onscreen window OpenGL backbuffer coordinates when using native Retina resolution, ie.
+    // framebuffer is higher resolution / size than wl_surface aka window logical size:
+    if (windowRecord->specialflags & kPsychNeedRetinaResolution) {
+        double autoscale = (double) nativewidth / (double) frontendwidth;
+
+        if (PsychPrefStateGet_Verbosity() > 3)
+            printf("PTB-INFO: Wayland + Native Retina display mode. Auto scale factor is %f.\n", autoscale);
+
+        // Not used yet on Wayland: windowRecord->internalMouseMultFactor = 1 / autoscale;
+        windowRecord->externalMouseMultFactor = autoscale;
+    }
     #endif
 
     //Return the window index and the rect argument.

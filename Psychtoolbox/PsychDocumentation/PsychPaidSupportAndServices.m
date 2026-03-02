@@ -1,5 +1,12 @@
 function PsychPaidSupportAndServices(mininag)
 %
+% News: Since December 2025, we have discontinued the "paid support
+% membership" program, due to its utter lack of business success. Users who
+% initially bought or renewed such a support membership before end of sale
+% in December 2025 will still get this priority support until their current
+% membership runs out 365 days after purchase or renewal. Purchase of new
+% support memberships or renewal of existing ones is no longer possible.
+%
 % If you are using a Psychtoolbox variant and version that requires a paid
 % software license key to function, e.g., on Microsoft Windows, or Apple
 % macOS, or for Matlab on Linux, then a few minutes of basic support per
@@ -10,10 +17,10 @@ function PsychPaidSupportAndServices(mininag)
 % authentication token by running this function, or by calling
 % PsychLicenseHandling('AuthenticationToken').
 %
-% For paid support beyond that, on the user forum or GitHub issue tracker,
-% you may have bought a "Psychtoolbox paid support membership" in the past.
-% If that membership is still valid, then the following procedure would
-% allow you to use it:
+% For guaranteed support beyond that, on the user forum or GitHub issue
+% tracker, you may have bought a "Psychtoolbox paid support membership" in
+% the past. If that membership is still valid, then the following procedure
+% would allow you to use it:
 %
 % 1. As part of your purchase, you will have received a document - an
 %    invoice - with a printed "Order Id" or "Order no.", and a printed "License key".
@@ -33,15 +40,15 @@ function PsychPaidSupportAndServices(mininag)
 %
 %    Please add the "authentication token" to your forum question or GitHub issue.
 %    This will prove to us that you deserve paid support for your question or
-%    issue. Please note that initial activation of your license key may take 5-10
-%    days after date of receipt of payment, so do not buy the paid support last
-%    minute, when the "house is already burning", but ahead of time, like you
-%    would do with a fire insurance.
+%    issue.
 %
 
 % Mini advert requested by some caller, e.g., PsychtoolboxPostInstallRoutine?
 if exist('mininag', 'var') && (mininag > 0)
     fprintf('\n');
+
+    % We don't offer this at the moment, so don't advertise it:
+    return;
 
     % mininag 2 if called from an error handler, mininag 1 if called from
     % general setup code:
@@ -73,17 +80,17 @@ try
     fprintf('Checking if this machine has a valid Psychtoolbox software license activated...\n\n');
     if ~PsychLicenseHandling('AuthenticationToken')
         fprintf('\nIf an authentication token was printed, you may be able to get a few minutes of\n');
-        fprintf('free support. This would spare you from paying for additional paid support. Worth a try...\n\n');
+        fprintf('free support, by posting that token along your question on the Psychtoolbox user forum.\n\n');
     else
-        fprintf('\nNo valid and active Psychtoolbox software license with support option detected. That leaves the paid option...\n\n');
+        fprintf('\nNo valid and active Psychtoolbox software license detected.\n\n');
     end
 catch
-    fprintf('No valid and active Psychtoolbox software license detected. That leaves the paid option...\n\n');
+    fprintf('No valid and active Psychtoolbox software license detected.\n\n');
 end
 
 answer = '';
 while length(answer)~=1 || ~ismember(answer, ['y', 'n'])
-    answer = strtrim(input('Do you need additional paid support now and have an active support license key [y/n]? ', 's'));
+    answer = strtrim(input('Do you need additional support and already have an active support license key bought in the past [y/n]? ', 's'));
 end
 
 if ~strcmpi(answer, 'y')

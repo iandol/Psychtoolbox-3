@@ -184,7 +184,7 @@ static char synopsisString[] =
     "The info struct contains the following fields:\n"
     "----------------------------------------------\n\n"
     "Beamposition: Current rasterbeam position of the video scanout cycle.\n"
-    "LastVBLTimeOfFlip: VBL timestamp of last finished Screen('Flip') operation.\n"
+    "LastVBLTimeOfFlip: VBL timestamp of last finished Screen('Flip') operation, or zero if unknown.\n"
     "TimeAtSwapRequest: Timestamp taken prior to submission of the low-level swap command. Useful for micro-benchmarking.\n"
     "TimePostSwapRequest: Timestamp taken after submission of the low-level swap command. Useful for micro-benchmarking.\n"
     "VBLTimePostFlip: Optional flip completion timestamp from VBLANK timestamping. Useful for micro-benchmarking.\n"
@@ -192,9 +192,9 @@ static char synopsisString[] =
     "GPULastFrameRenderTime: Duration of all rendering operations, as measured by GPU, if infoType=5 was used.\n"
     "RawSwapTimeOfFlip: Raw (uncorrected by high-precision timestamping) timestamp of last finished Screen('Flip') operation.\n"
     "LastVBLTime: System time when last vertical blank happened, or the same as "
-    "LastVBLTimeOfFlip if the system doesn't support queries of this property (currently only OS/X does.)\n"
+    "LastVBLTimeOfFlip if the system doesn't support queries of this property.\n"
     "VBLCount: Running count of vertical blank intervals since (graphics)system startup. Or zero if not"
-    "supported by system. Currently only OS/X and Linux do support this with some GPU's.\n"
+    "supported by system. Currently only macOS and Linux do support this with some GPU's.\n"
     "VideoRefreshFromBeamposition: Estimate of video refresh cycle from beamposition measurement method.\n"
     "GLVendor, GLRenderer, GLVersion: Vendor name, renderer name and version of the OpenGL implementation.\n"
     "GLDeviceUUID: The unique device id if supported by the OpenGL implementation, an empty field otherwise.\n"
@@ -587,15 +587,21 @@ PsychError SCREENGetWindowInfo(void)
         PsychSetStructArrayDoubleElement("SwapBarrier", 0, windowRecord->swapBarrier, s);
 
         // Windowing system low-level onscreen window handle or equivalent info:
-        #if (PSYCH_SYSTEM == PSYCH_LINUX) && !defined(PTB_USE_WAYLAND)
-            // Linux/X11: The X-Window handle 'Window':
+        #if (PSYCH_SYSTEM == PSYCH_LINUX)
+            // Linux/X11: The X-Window handle 'Window', and under Linux/Wayland the wl_surface backing the windowRecord:
             PsychSetStructArrayUnsignedInt64Element("SysWindowHandle", 0, (psych_uint64) (size_t) windowRecord->targetSpecific.xwindowHandle, s);
         #else
             PsychSetStructArrayUnsignedInt64Element("SysWindowHandle", 0, (psych_uint64) (size_t) windowRecord->targetSpecific.windowHandle, s);
         #endif
 
-        // Windowing system low-level onscreen window related handle used for graphics/display api interop in some way: macOS use only atm.
-        PsychSetStructArrayUnsignedInt64Element("SysWindowInteropHandle", 0, (psych_uint64) (size_t) windowRecord->targetSpecific.deviceContext, s);
+        // Windowing system low-level onscreen window related handle used for graphics/display api interop in some way: macOS and Linux/Wayland use only atm.
+        #if (PSYCH_SYSTEM == PSYCH_LINUX) && defined(PTB_USE_WAYLAND)
+            // These are defined in PsychScreenGlueWayland.c: TODO Could use targetSpecific.privDpy for storing wl_display as a more clean solution?
+            extern struct wl_display* wl_display;
+            PsychSetStructArrayUnsignedInt64Element("SysWindowInteropHandle", 0, (psych_uint64) (size_t) wl_display, s);
+        #else
+            PsychSetStructArrayUnsignedInt64Element("SysWindowInteropHandle", 0, (psych_uint64) (size_t) windowRecord->targetSpecific.deviceContext, s);
+        #endif
 
         // Scaling factor for input coordinate transformation functions like RemapMouse.m:
         PsychSetStructArrayDoubleElement("ExternalMouseMultFactor", 0, windowRecord->externalMouseMultFactor, s);
