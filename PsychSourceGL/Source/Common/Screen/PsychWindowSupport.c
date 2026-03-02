@@ -45,11 +45,6 @@
 
 #include "Screen.h"
 
-// Define this for non-Waffle builds:
-#ifndef WAFFLE_PLATFORM_WAYLAND
-#define WAFFLE_PLATFORM_WAYLAND 0x0014
-#endif
-
 #if PSYCH_SYSTEM == PSYCH_LINUX
 #include <errno.h>
 // utsname for uname() so we can find out on which kernel we're running:
@@ -664,10 +659,26 @@ psych_bool PsychOpenOnscreenWindow(PsychScreenSettingsType *screenSettings, Psyc
                 printf("\n\n\n\n");
                 printf("PTB-WARNING: Seems that a Mesa OpenGL software renderer is active! This will likely cause miserable\n");
                 printf("PTB-WARNING: performance, lack of functionality and severe timing and synchronization problems.\n");
-                printf("PTB-WARNING: Most likely you are running Psychtoolbox on a Matlab version 8.4 (R2014b) or later and\n");
-                printf("PTB-WARNING: Matlab is causing this problem by overriding your operating systems OpenGL library with\n");
-                printf("PTB-WARNING: its own outdated software library. Please run the setup script PsychLinuxConfiguration()\n");
-                printf("PTB-WARNING: now from your Matlab command window and then quit and restart Matlab to fix this problem.\n");
+                #if (PSYCH_LANGUAGE == PSYCH_MATLAB) && !defined(PTBOCTAVE3MEX)
+                    printf("PTB-WARNING: Most likely you are running Psychtoolbox on a Matlab version 8.4 (R2014b) or later and\n");
+                    printf("PTB-WARNING: Matlab is causing this problem by overriding your operating systems OpenGL library with\n");
+                    printf("PTB-WARNING: its own outdated software library. Please run the setup script PsychLinuxConfiguration()\n");
+                    printf("PTB-WARNING: now from your Matlab command window and then quit and restart Matlab to fix this problem.\n");
+                    printf("PTB-WARNING: If that doesn't fix it, and you are on Matlab R2025a or later, try launching Matlab once\n");
+                    printf("PTB-WARNING: from a terminal window as follows: matlab -nosoftwareopengl\n");
+                    printf("PTB-WARNING: \n");
+                    printf("PTB-WARNING: If that still does not fix it, especially after a Matlab or operating system update, read on.\n");
+                    printf("PTB-WARNING: \n");
+                    printf("PTB-WARNING: On a Debian or Ubuntu based Linux distribution, you should run the following\n");
+                    printf("PTB-WARNING: command from a terminal window after each upgrade of Matlab, and then exit and restart\n");
+                    printf("PTB-WARNING: Matlab, to fix compatibility problems caused by Matlab. Sometimes this may also be needed\n");
+                    printf("PTB-WARNING: after an upgrade or software update of your Linux system. Execute the following command ...\n");
+                    printf("PTB-WARNING: \n");
+                    printf("PTB-WARNING: sudo dpkg-reconfigure matlab-support\n");
+                    printf("PTB-WARNING: \n");
+                    printf("PTB-WARNING: ... and when prompted, answer all questions, if problems should be fixed by renaming library\n");
+                    printf("PTB-WARNING: files, with a YES. After that, restart Matlab and retry.\n");
+                #endif
                 printf("\n\n");
             }
         }
@@ -4319,6 +4330,14 @@ double PsychFlipWindowBuffers(PsychWindowRecordType *windowRecord, int multiflip
 
     // Take preswap timestamp:
     PsychGetAdjustedPrecisionTimerSeconds(&time_at_swaprequest);
+
+    #if PSYCH_SYSTEM == PSYCH_LINUX
+    // Request swap completion event for next present from Linux Wayland backend when using it with the external Vulkan display backend
+    // and this is requested by the backend, or by 'GetFlipInfo':
+    if ((windowRecord->specialflags & kPsychSkipSwapForFlipOnce) && (windowRecord->specialflags & kPsychExternalDisplayMethod) &&
+        (windowRecord->swapevents_enabled != 0) && (windowRecord->winsysType == WAFFLE_PLATFORM_WAYLAND))
+        PsychOSSwapCompletionLogging(windowRecord, 5, 0);
+    #endif
 
     // Execute the hookchain for non-OpenGL operations that need to happen immediately before the bufferswap, e.g.,
     // sending out control signals or commands to external hardware to somehow sync it up to imminent bufferswaps:

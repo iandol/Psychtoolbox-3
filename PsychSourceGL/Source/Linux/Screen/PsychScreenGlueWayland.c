@@ -118,6 +118,18 @@
 // Header file for commit-timing-protocol extension:
 #include "commit_timing-client-protocol.h"
 
+// fifo protocol extension:
+#include "fifo-client-protocol.h"
+
+// viewporter extension for HiDPI scaling:
+#include "viewporter-client-protocol.h"
+
+// xdg_output extension for getting logical size of a wayland output - for HiDPI scaling:
+#include "xdg_output_unstable-client-protocol.h"
+
+// pointer-warp protocol for mouse cursor positioning:
+#include "pointer_warp-client-protocol.h"
+
 /* These are needed for our GPU specific beamposition query implementation: */
 #include <errno.h>
 #include <stdio.h>
@@ -182,6 +194,14 @@ uint32_t wayland_presentation_clock_id;
 
 // Handle to commit timing extension:
 struct wp_commit_timing_manager_v1 *wayland_commit_timing_manager = NULL;
+
+struct wp_fifo_manager_v1 *wayland_fifo_manager = NULL;
+
+struct wp_viewporter *wayland_viewporter = NULL;
+
+struct zxdg_output_manager_v1 *wayland_output_manager = NULL;
+
+struct wp_pointer_warp_v1 *wayland_pointer_warp = NULL;
 
 static struct wl_registry *wl_registry = NULL;
 static psych_bool wayland_roundtrip_needed = FALSE;
@@ -334,17 +354,23 @@ struct output_info {
     // struct global_info global;
 
     struct wl_output *output;
+    struct zxdg_output_v1 *xdg_output;
 
     struct {
         int32_t x, y, scale;
+        int32_t logical_width, logical_height;
         int32_t physical_width, physical_height;
         enum wl_output_subpixel subpixel;
         enum wl_output_transform output_transform;
         char *make;
         char *model;
+        char *name;
+        char *description;
     } geometry;
 
     struct wl_list modes;
+
+    int screenId;
 
     // Associated colord display device:
     CdDevice* colord_device;
@@ -353,7 +379,7 @@ struct output_info {
 // Array of information about all available Wayland outputs:
 static struct output_info* displayOutputs[kPsychMaxPossibleDisplays];
 // Same as above, but only stores a pointer to the wl_output:
-// Currently shared with PsychWindoeGlueWayland.c:
+// Currently shared with PsychWindowGlueWayland.c:
 struct wl_output* displayWaylandOutputs[kPsychMaxPossibleDisplays];
 
 static void
@@ -363,8 +389,6 @@ print_output_info(void *data)
     struct output_mode *mode;
     const char *subpixel_orientation;
     const char *transform;
-
-    //print_global_info(data);
 
     switch (output->geometry.subpixel) {
         case WL_OUTPUT_SUBPIXEL_UNKNOWN:
@@ -424,8 +448,14 @@ print_output_info(void *data)
             break;
     }
 
+    printf("\tscreenId: %d\n", output->screenId);
+    printf("\tname: '%s'\n", output->geometry.name);
+    printf("\tdescription: '%s'\n", output->geometry.description);
     printf("\tx: %d, y: %d, scale: %d\n",
            output->geometry.x, output->geometry.y, output->geometry.scale);
+    printf("\tlogical_width: %d pt, logical_height: %d pt,\n",
+           output->geometry.logical_width,
+           output->geometry.logical_height);
     printf("\tphysical_width: %d mm, physical_height: %d mm,\n",
            output->geometry.physical_width,
            output->geometry.physical_height);
@@ -538,14 +568,13 @@ static void output_handle_done(void *data, struct wl_output *wl_output)
     struct output_mode *mode;
     struct output_info *output = data;
 
-    // TODO FIXME HACK: This is not the appropriate place for taking output HiDPI scaling
-    // into account! But as a hack it will do to get reasonably ok windows on a compositor
-    // with a integer scaled output.
-    wl_list_for_each(mode, &output->modes, link) {
-        printf("%i x %i DS: %i => ", mode->width, mode->height, output->geometry.scale);
-        mode->width /= output->geometry.scale;
-        mode->height /= output->geometry.scale;
-        printf("%i x %i\n", mode->width, mode->height);
+    (void) wl_output;
+
+    if (PsychPrefStateGet_Verbosity() > 5) {
+        wl_list_for_each(mode, &output->modes, link) {
+            printf("PTB-DEBUG: [%i] Output physical resolution in pixels %i x %i Display integer scaling factor: %i.\n",
+                   output->screenId, mode->width, mode->height, output->geometry.scale);
+        }
     }
 
     return;
@@ -554,6 +583,8 @@ static void output_handle_done(void *data, struct wl_output *wl_output)
 static void output_handle_scale(void *data, struct wl_output *wl_output, int32_t factor)
 {
     struct output_info *output = data;
+
+    (void) wl_output;
     output->geometry.scale = factor;
 }
 
@@ -564,6 +595,73 @@ static const struct wl_output_listener output_listener = {
     output_handle_scale,
 };
 
+static void xdg_output_handle_logical_position(void *data, struct zxdg_output_v1 *zxdg_output_v1, int32_t x, int32_t y)
+{
+    struct output_info *output = data;
+
+    (void) zxdg_output_v1;
+
+    // logical position should be identical to wl_output position, so just report unexpected mismatch:
+    if (output->geometry.x != x || output->geometry.y != y)
+        printf("PTB-WARNING: [%i] wl_output vs. xdg_output position mismatch: wx = %i vs lx = %i, wy = %i vs ly = %i\n",
+               output->screenId, output->geometry.x, x, output->geometry.y, y);
+}
+
+static void xdg_output_handle_logical_size(void *data, struct zxdg_output_v1 *zxdg_output_v1, int32_t w, int32_t h)
+{
+    struct output_info *output = data;
+
+    (void) zxdg_output_v1;
+
+    output->geometry.logical_width  = w;
+    output->geometry.logical_height = h;
+
+    if (PsychPrefStateGet_Verbosity() > 5)
+        printf("PTB-DEBUG: [%i] Output logical size: width %i x height = %i\n",
+               output->screenId, output->geometry.logical_width, output->geometry.logical_height);
+}
+
+static void xdg_output_handle_name(void *data, struct zxdg_output_v1 *zxdg_output_v1, const char *name)
+{
+    struct output_info *output = data;
+
+    (void) zxdg_output_v1;
+
+    output->geometry.name = xstrdup(name);
+    if (PsychPrefStateGet_Verbosity() > 5)
+        printf("PTB-DEBUG: [%i] Output name = %s\n", output->screenId, name);
+}
+
+static void xdg_output_handle_description(void *data, struct zxdg_output_v1 *zxdg_output_v1, const char *description)
+{
+    struct output_info *output = data;
+
+    (void) zxdg_output_v1;
+
+    output->geometry.description = xstrdup(description);
+    if (PsychPrefStateGet_Verbosity() > 5)
+        printf("PTB-DEBUG: [%i] Output description = %s\n", output->screenId, description);
+}
+
+// Deprecated: No longer sent since interface version 3, but must still be hooked up as long as we handle version 2.
+static void xdg_output_handle_done(void *data, struct zxdg_output_v1 *zxdg_output_v1)
+{
+    struct output_info *output = data;
+
+    (void) zxdg_output_v1;
+
+    if (PsychPrefStateGet_Verbosity() > 5)
+        printf("PTB-DEBUG: [%i] XDG output done.\n", output->screenId);
+}
+
+static const struct zxdg_output_v1_listener xdg_output_listener = {
+    .logical_position = xdg_output_handle_logical_position,
+    .logical_size = xdg_output_handle_logical_size,
+    .done = xdg_output_handle_done,
+    .name = xdg_output_handle_name,
+    .description = xdg_output_handle_description,
+};
+
 static void
 destroy_output_info(void *data)
 {
@@ -572,10 +670,20 @@ destroy_output_info(void *data)
 
     wl_output_destroy(output->output);
 
+    if (output->xdg_output)
+        zxdg_output_v1_destroy(output->xdg_output);
+
     if (output->geometry.make != NULL)
         free(output->geometry.make);
+
     if (output->geometry.model != NULL)
         free(output->geometry.model);
+
+    if (output->geometry.name != NULL)
+        free(output->geometry.name);
+
+    if (output->geometry.description != NULL)
+        free(output->geometry.description);
 
     wl_list_for_each_safe(mode, tmp, &output->modes, link) {
         wl_list_remove(&mode->link);
@@ -586,21 +694,39 @@ destroy_output_info(void *data)
     output->colord_device = NULL;
 }
 
-static void add_output_info(struct output_info** outputSlot, uint32_t id, uint32_t version)
+static void add_output_info(struct output_info** outputSlot, uint32_t id, uint32_t version, int screenId)
 {
-    struct output_info *output = xzalloc(sizeof *output);
+    struct output_info *output = NULL;
 
-    // init_global_info(info, &output->global, id, "wl_output", version);
-    // output->global.print = print_output_info;
-    // output->global.destroy = destroy_output_info;
-    *outputSlot = output;
+    // First pass for this output slot?
+    if (*outputSlot == NULL) {
+        // Yes: Init and attach wl_output info structure:
+        output = xzalloc(sizeof *output);
+        *outputSlot = output;
 
-    wl_list_init(&output->modes);
+        wl_list_init(&output->modes);
 
-    output->output = wl_registry_bind(wl_registry, id,
-                                      &wl_output_interface, 2);
-    wl_output_add_listener(output->output, &output_listener,
-                           output);
+        output->output = wl_registry_bind(wl_registry, id, &wl_output_interface, version);
+        wl_output_add_listener(output->output, &output_listener, output);
+
+        // Assign PTB screenId:
+        output->screenId = screenId;
+    }
+    else {
+        // No: 2nd pass, likely after wayland_output_manager init and bind:
+        output = *outputSlot;
+    }
+
+    // If wayland_output_manager is available, but this wl_output output does not yet
+    // have a xdg_output associated, then do it now:
+    if (wayland_output_manager && (output->xdg_output == NULL)) {
+        output->xdg_output = zxdg_output_manager_v1_get_xdg_output(wayland_output_manager, output->output);
+        zxdg_output_v1_add_listener(output->xdg_output, &xdg_output_listener, output);
+
+        if (PsychPrefStateGet_Verbosity() > 4)
+            printf("PTB-DEBUG: New xdg output for screen %i attached.\n", screenId);
+    }
+
     wayland_roundtrip_needed = TRUE;
 }
 
@@ -618,9 +744,7 @@ static const struct wp_presentation_listener wayland_presentation_listener = {
 };
 
 struct seat_info {
-//    struct global_info global;
     struct wl_seat *seat;
-//    struct weston_info *info;
 
     uint32_t capabilities;
     char *name;
@@ -655,7 +779,6 @@ print_seat_info(void *data)
 {
     struct seat_info *seat = data;
 
-    //print_global_info(data);
     printf("\tNew Wayland input seat detected:\n");
     printf("\tname: %s\n", seat->name);
     printf("\tcapabilities:");
@@ -684,7 +807,7 @@ keyboard_handle_keymap(void *data, struct wl_keyboard *keyboard,
     struct xkb_state *state;
     char *map_str;
 
-    if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: Keyboard keymap received for keyboard of seat %p.\n", seat);
+    if (PsychPrefStateGet_Verbosity() > 9) printf("PTB-DEBUG: Keyboard keymap received for keyboard of seat %p.\n", seat);
 
     if (!seat) {
         close(fd);
@@ -1116,6 +1239,7 @@ wayland_registry_listener_global(void *data,
                                  const char *interface,
                                  uint32_t version)
 {
+    int i;
     struct wl_display *self = data;
 
     if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: Wayland registry extension candidate: %s\n", interface);
@@ -1143,15 +1267,61 @@ wayland_registry_listener_global(void *data,
         if (PsychPrefStateGet_Verbosity() > 3) printf("PTB-DEBUG: Wayland wp_commit_timing_manager_v1_interface bound!\n");
     }
 
-    // Look for Wayland outputs ~ video outputs ~ displays ~ our PTB screens:
-    // Not yet sure if wl_output ~ PTB screen is the optimal abstraction/mapping,
-    // but as a starter...
-    if (!strcmp(interface, "wl_output") && (version >= 1)) {
-        add_output_info(&displayOutputs[numDisplays], name, version);
+    // Look for wp_fifo_manager_v1_interface support of version v1+:
+    if (!strcmp(interface, "wp_fifo_manager_v1") && (version >= 1)) {
+        wayland_fifo_manager = wl_registry_bind(registry, name, &wp_fifo_manager_v1_interface, 1);
+        if (!wayland_fifo_manager) {
+            if (PsychPrefStateGet_Verbosity() > 0) printf("PTB-ERROR: wl_registry_bind for wp_fifo_manager_v1 failed!\n");
+            return;
+        }
+
+        if (PsychPrefStateGet_Verbosity() > 3) printf("PTB-DEBUG: Wayland wp_fifo_manager_v1 bound!\n");
+    }
+
+    // Look for wp_viewporter support of version v1+:
+    if (!strcmp(interface, "wp_viewporter") && (version >= 1)) {
+        wayland_viewporter = wl_registry_bind(registry, name, &wp_viewporter_interface, 1);
+        if (!wayland_viewporter) {
+            if (PsychPrefStateGet_Verbosity() > 0) printf("PTB-ERROR: wl_registry_bind for wp_viewporter failed!\n");
+            return;
+        }
+
+        if (PsychPrefStateGet_Verbosity() > 3) printf("PTB-DEBUG: Wayland wp_viewporter bound!\n");
+    }
+
+    // Look for zxdg_output_manager support of version v1+ - We need at least interface version 2:
+    if (!strcmp(interface, "zxdg_output_manager_v1") && (version >= 2)) {
+        wayland_output_manager = wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, version);
+        if (!wayland_output_manager) {
+            if (PsychPrefStateGet_Verbosity() > 0) printf("PTB-ERROR: wl_registry_bind for zxdg_output_manager_v1 failed!\n");
+            return;
+        }
+
+        if (PsychPrefStateGet_Verbosity() > 3) printf("PTB-DEBUG: Wayland zxdg_output_manager_v1 bound!\n");
+
+        // Reprocess all existing outputs, now that we have wayland_output_manager:
+        for (i = 0; i < numDisplays; i++)
+            add_output_info(&displayOutputs[i], 0, 0, i);
+    }
+
+    // Look for Wayland outputs ~ video outputs ~ displays ~ our PTB screens. We use interface version 2:
+    if (!strcmp(interface, "wl_output") && (version >= 2)) {
+        add_output_info(&displayOutputs[numDisplays], name, 2, numDisplays);
         if (PsychPrefStateGet_Verbosity() > 4) {
             printf("PTB-DEBUG: New output display screen %i enumerated.\n", numDisplays);
         }
         numDisplays++;
+    }
+
+    // Look for wp_pointer_warp_v1 support of version v1+:
+    if (!strcmp(interface, "wp_pointer_warp_v1") && (version >= 1)) {
+        wayland_pointer_warp = wl_registry_bind(registry, name, &wp_pointer_warp_v1_interface, 1);
+        if (!wayland_pointer_warp) {
+            if (PsychPrefStateGet_Verbosity() > 0) printf("PTB-ERROR: wl_registry_bind for wp_pointer_warp failed!\n");
+            return;
+        }
+
+        if (PsychPrefStateGet_Verbosity() > 3) printf("PTB-DEBUG: Wayland wp_pointer_warp bound!\n");
     }
 
     // Look for Wayland wl_seat ~ collections of input devices:
@@ -1185,6 +1355,24 @@ static const struct wl_registry_listener wayland_registry_listener = {
     .global = wayland_registry_listener_global,
     .global_remove = wayland_registry_listener_global_remove
 };
+
+// Callback function for wl_display error reporting and handling:
+static void wayland_display_handle_error(const struct wl_interface *interface, uint32_t code, uint32_t id)
+{
+    printf("PTB-CRITICAL: Fatal Wayland protocol error %u for object %u with Wayland interface: %s\n", code, id, (interface) ? interface->name : "Unknown");
+    printf("PTB-CRITICAL: Terminating the whole host application in 10 seconds, as it otherwise would permanently hang! Run from a terminal for more persistent output.\n");
+
+    fprintf(stderr, "PTB-CRITICAL: Fatal Wayland protocol error %u for object %u with Wayland interface: %s\n", code, id, (interface) ? interface->name : "Unknown");
+    fprintf(stderr, "PTB-CRITICAL: Terminating the whole host application in 10 seconds, as it otherwise would permanently hang!\n");
+
+    fflush(NULL);
+
+    // Wait 10 seconds before terminating:
+    PsychWaitIntervalSeconds(10);
+
+    // Protocol errors are fatal and terminate the connection, so we exit.
+    exit(1);
+}
 
 struct wp_presentation *get_wayland_presentation_extension(PsychWindowRecordType* windowRecord)
 {
@@ -1352,7 +1540,17 @@ static void ProcessWaylandEvents(int screenNumber)
     do {
         wayland_roundtrip_needed = FALSE;
         if (wl_display_roundtrip(wl_display) == -1) {
-            if (PsychPrefStateGet_Verbosity() > 1) printf("PTB-WARNING: ProcessWaylandEvents(): wl_display_roundtrip failed!\n");
+            if (PsychPrefStateGet_Verbosity() > 0)
+                printf("PTB-WARNING: ProcessWaylandEvents(): wl_display_roundtrip failed! Error: %u\n", wl_display_get_error(wl_display));
+
+            // An EPROTO error is fatal / unrecoverable and will lead to complete host application termination!
+            if (EPROTO == wl_display_get_error(wl_display)) {
+                const struct wl_interface* interface;
+                uint32_t code, id;
+
+                code = wl_display_get_protocol_error(wl_display, &interface, &id);
+                wayland_display_handle_error(interface, code, id);
+            }
         }
         // Repeat until everything is enumerated.
     } while (wayland_roundtrip_needed);
@@ -1439,7 +1637,7 @@ const char* PsychOSGetOutputProps(int screenId, int outputIdx, psych_bool return
     output = displayOutputs[screenId];
 
     // Store output name to return:
-    sprintf(outputName, "%s %s", output->geometry.make, output->geometry.model);
+    snprintf(outputName, sizeof(outputName), "%s", output->geometry.name);
 
     // And width / height in mm:
     if (mm_width) *mm_width = (unsigned long) output->geometry.physical_width;
@@ -1518,7 +1716,7 @@ void InitCGDisplayIDList(void)
     free(wafflenatdis);
     wafflenatdis = NULL;
 
-    if (!getenv("PSYCH_DISABLE_COLORD")) {
+    if (getenv("PSYCH_ENABLE_COLORD") /* !getenv("PSYCH_DISABLE_COLORD") */) {
         // Initialize connection to colord - the color management daemon:
         colord_client = cd_client_new();
 
@@ -1568,7 +1766,7 @@ void InitCGDisplayIDList(void)
     }
     else {
         colord_client = NULL;
-        if (PsychPrefStateGet_Verbosity() > 2) printf("PTB-INFO: Disabled colord support via users setenv('PSYCH_DISABLE_COLORD', '1'). Gamma table functions disabled.\n");
+        if (PsychPrefStateGet_Verbosity() > 2) printf("PTB-INFO: Disabled colord support due to lack of user setenv('PSYCH_ENABLE_COLORD', '1'). Gamma table functions disabled.\n");
     }
 
     // Get our own wl_registry, do the enumeration and binding:
@@ -1683,10 +1881,35 @@ void PsychCleanupDisplayGlue(void)
 
     wayland_pres = NULL;
 
+    // Reset commit timing extension binding:
     if (wayland_commit_timing_manager)
         wp_commit_timing_manager_v1_destroy(wayland_commit_timing_manager);
 
     wayland_commit_timing_manager = NULL;
+
+    // Reset fifo extension binding:
+    if (wayland_fifo_manager)
+        wp_fifo_manager_v1_destroy(wayland_fifo_manager);
+
+    wayland_fifo_manager = NULL;
+
+    // Reset viewporter extension binding:
+    if (wayland_viewporter)
+        wp_viewporter_destroy(wayland_viewporter);
+
+    wayland_viewporter = NULL;
+
+    // Reset output manager extension binding:
+    if (wayland_output_manager)
+        zxdg_output_manager_v1_destroy(wayland_output_manager);
+
+    wayland_output_manager = NULL;
+
+    // Reset our pointer warp binding:
+    if (wayland_pointer_warp)
+        wp_pointer_warp_v1_destroy(wayland_pointer_warp);
+
+    wayland_pointer_warp = NULL;
 
     // Destroy our reference to the registry:
     wl_registry_destroy(wl_registry);
@@ -1715,37 +1938,16 @@ void PsychCleanupDisplayGlue(void)
 
 void PsychGetScreenDepths(int screenNumber, PsychDepthType *depths)
 {
-    int* x11_depths = NULL;
-    int  i, count = 0;
-
     if (screenNumber >= numDisplays || screenNumber < 0) PsychErrorExitMsg(PsychError_internal, "screenNumber is out of range");
 
-    // Update out view of this screens configuration:
-    PsychLockDisplay();
-//      ProcessWaylandEvents(screenNumber);
-//
-//     if (displayCGIDs[screenNumber]) {
-//         x11_depths = XListDepths(displayCGIDs[screenNumber], PsychGetXScreenIdForScreen(screenNumber), &count);
-//     }
-
-    PsychUnlockDisplay();
-
-    if (x11_depths && depths && count > 0) {
-        // Query successful: Add all values to depth struct:
-//         for(i=0; i<count; i++) PsychAddValueToDepthStruct(x11_depths[i], depths);
-//         XFree(x11_depths);
-    }
-    else {
-        // Query failed: Assume at least 32 bits is available.
-        printf("PTB-WARNING: Couldn't query available display depths values! Returning a made up list...\n");
-        PsychAddValueToDepthStruct(32, depths);
-        PsychAddValueToDepthStruct(24, depths);
-        PsychAddValueToDepthStruct(16, depths);
-    }
+    // Not possible on Wayland: Assume at least 24 bits is available:
+    PsychAddValueToDepthStruct(24, depths);
 }
 
 double PsychOSVRefreshFromMode(XRRModeInfo *mode)
 {
+    (void) mode;
+
     // This routine is not really needed anymore. Only theoretically called from
     // SCREENResolutions.c, where it gets skipped anyway. Just define a no-op
     // implementation to avoid linker failure or ugly workarounds for the moment:
@@ -1900,18 +2102,9 @@ psych_bool PsychCheckVideoSettings(PsychScreenSettingsType *setting)
 void PsychGetScreenDepth(int screenNumber, PsychDepthType *depth)
 {
     if (screenNumber>=numDisplays || screenNumber < 0) PsychErrorExitMsg(PsychError_internal, "screenNumber is out of range"); //also checked within SCREENPixelSizes
-// TODO: Make it work for real.
-    PsychLockDisplay();
-//     ProcessWaylandEvents(screenNumber);
-//
-//     if (displayCGIDs[screenNumber]) {
-//         PsychAddValueToDepthStruct(DefaultDepth(displayCGIDs[screenNumber], PsychGetXScreenIdForScreen(screenNumber)), depth);
-//     }
-//     else {
-        PsychAddValueToDepthStruct(24, depth);
-//     }
 
-    PsychUnlockDisplay();
+    // Use a safe default of 24 bit color depth aka 8 bpc / 16.8 million colors:
+    PsychAddValueToDepthStruct(24, depth);
 }
 
 float PsychGetNominalFramerate(int screenNumber)
@@ -1973,14 +2166,14 @@ void PsychGetScreenPixelSize(int screenNumber, long *width, long *height)
     if (screenNumber >= numDisplays || screenNumber < 0) PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychGetScreenPixelSize() is out of range");
     if (!displayOutputs[screenNumber]) PsychErrorExitMsg(PsychError_system, "Could not query screen size in PsychGetScreenPixelSize() for wanted screen");
 
-    // Update XLib's view of this screens configuration:
+    // Update our view of this screens configuration:
     PsychLockDisplay();
     ProcessWaylandEvents(screenNumber);
 
     // Get size from current mode:
-    // TODO: Make sure to take output scaling info provided via wl_output listener callback into account:
     mode = PsychWaylandGetCurrentMode(screenNumber);
-    if (!mode) PsychErrorExitMsg(PsychError_system, "Could not query screen size in PsychGetScreenPixelSize() for wanted screen");
+    if (!mode)
+        PsychErrorExitMsg(PsychError_system, "Could not query screen size in PsychGetScreenPixelSize() for wanted screen");
 
     *width = (int) mode->width;
     *height = (int) mode->height;
@@ -1988,26 +2181,35 @@ void PsychGetScreenPixelSize(int screenNumber, long *width, long *height)
     PsychUnlockDisplay();
 }
 
-// Width and height of output in compositor space units (points?):
+// Get output scaling factor aka "Retina scaling factor":
+double PsychGetScreenOutputScale(int screenNumber)
+{
+    // Query physical and logical size of output:
+    long pwidth, pheight, lwidth, lheight;
+    PsychGetScreenPixelSize(screenNumber, &pwidth, &pheight);
+    PsychGetScreenSize(screenNumber, &lwidth, &lheight);
+
+    // Choose output scale as ratio physical / logical:
+    double scale = (double) pwidth / (double) lwidth;
+
+    return(scale);
+}
+
+// Width and height of output in compositor space units (aka points):
 void PsychGetScreenSize(int screenNumber, long *width, long *height)
 {
-    struct output_mode* mode = NULL;
+    if (screenNumber >= numDisplays || screenNumber < 0)
+        PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychGetScreenSize() is out of range");
 
-    if (screenNumber >= numDisplays || screenNumber < 0) PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychGetScreenSize() is out of range");
-    if (!displayOutputs[screenNumber]) PsychErrorExitMsg(PsychError_system, "Could not query screen size in PsychGetScreenSize() for wanted screen");
+    if (!displayOutputs[screenNumber])
+        PsychErrorExitMsg(PsychError_system, "Could not query screen size in PsychGetScreenSize() for wanted screen");
 
-    // Update XLib's view of this screens configuration:
+    // Update our view of this screens configuration:
     PsychLockDisplay();
     ProcessWaylandEvents(screenNumber);
 
-    // Get size from current mode:
-    // TODO: Make sure to take output scaling info provided via wl_output listener callback into account,
-    // so we don't report wrong values on HiDPI / Retina style displays:
-    mode = PsychWaylandGetCurrentMode(screenNumber);
-    if (!mode) PsychErrorExitMsg(PsychError_system, "Could not query screen size in PsychGetScreenSize() for wanted screen");
-
-    *width = mode->width;
-    *height = mode->height;
+    *width = (long) displayOutputs[screenNumber]->geometry.logical_width;
+    *height = (long) displayOutputs[screenNumber]->geometry.logical_height;
 
     PsychUnlockDisplay();
 }
@@ -2019,7 +2221,7 @@ void PsychGetGlobalScreenRect(int screenNumber, double *rect)
     rect[kPsychLeft]   += (int) displayOutputs[screenNumber]->geometry.x;
     rect[kPsychRight]  += (int) displayOutputs[screenNumber]->geometry.x;
     rect[kPsychTop]    += (int) displayOutputs[screenNumber]->geometry.y;
-    rect[kPsychBottom] += (int) displayOutputs[screenNumber]->geometry.y;;
+    rect[kPsychBottom] += (int) displayOutputs[screenNumber]->geometry.y;
 }
 
 // Bounding rectangle of output in compositor space units (points?):
@@ -2318,7 +2520,6 @@ void PsychOSDefineWaylandCursor(int screenNumber, int deviceId, const char* curs
     seat = waylandInputDevices[deviceId];
 
     if (wayland_cursor_theme) {
-        // Assign initial default cursor: The classic left-tilted arrow pointer:
         seat->current_cursor = wl_cursor_theme_get_cursor(wayland_cursor_theme, cursorName);
         if (!seat->current_cursor) {
             if (PsychPrefStateGet_Verbosity() > 0) {
@@ -2423,9 +2624,49 @@ void PsychShowCursor(int screenNumber, int deviceIdx)
 
 void PsychPositionCursor(int screenNumber, int x, int y, int deviceIdx)
 {
-    // Not available on Wayland, as of version 1.6 - January 2015:
-    if (PsychPrefStateGet_Verbosity() > 2) printf("PTB-INFO: SetCursor() request ignored, as this isn't currently supportable on Wayland.\n");
-    return;
+    PsychWindowRecordType* windowRecord;
+    struct seat_info* seat;
+    double xs, ys;
+
+    if (!wayland_pointer_warp) {
+        // Not available on this Wayland setup:
+        if (PsychPrefStateGet_Verbosity() > 1)
+            printf("PTB-WARNING: SetMouse() mouse cursor positioning request ignored, as this is not supported on this Wayland system.\n");
+
+        return;
+    }
+
+    // deviceIdx -1 means "auto-detected default pointer". Simply use the first found pointer device:
+    if (deviceIdx < 0) {
+        for (deviceIdx = 0; deviceIdx < numInputDevices; deviceIdx++) {
+            if (waylandInputDevices[deviceIdx] && (waylandInputDevices[deviceIdx]->capabilities & WL_SEAT_CAPABILITY_POINTER))
+                break;
+        }
+    }
+
+    // Outside valid range for input devices?
+    if (deviceIdx < 0 || deviceIdx >= numInputDevices)
+        PsychErrorExitMsg(PsychError_user, "Invalid 'mouseIndex' provided. No such cursor pointer.");
+
+    // No device under that id, or device isn't a pointer?
+    if (!waylandInputDevices[deviceIdx] || !(waylandInputDevices[deviceIdx]->capabilities & WL_SEAT_CAPABILITY_POINTER))
+        PsychErrorExitMsg(PsychError_user, "Invalid 'mouseIndex' provided. No such cursor pointer.");
+
+    seat = waylandInputDevices[deviceIdx];
+
+    // Doesn't work if no window has pointer focus:'
+    if (!seat->pointerFocusWindow)
+        return;
+
+    // Rescale for proper handling of native Retina / HiDPI mode:
+    windowRecord = (PsychWindowRecordType*) wl_surface_get_user_data(seat->pointerFocusWindow);
+    xs = (double) x / windowRecord->externalMouseMultFactor;
+    ys = (double) y / windowRecord->externalMouseMultFactor;
+
+    // Execute request: Sadly there is no feedback if the request was actually honored by the compositor:
+    wp_pointer_warp_v1_warp_pointer(wayland_pointer_warp, seat->pointerFocusWindow, wl_seat_get_pointer(seat->seat), wl_fixed_from_double(xs), wl_fixed_from_double(ys), seat->last_serial);
+
+    ProcessWaylandEvents(screenNumber);
 }
 
 /*

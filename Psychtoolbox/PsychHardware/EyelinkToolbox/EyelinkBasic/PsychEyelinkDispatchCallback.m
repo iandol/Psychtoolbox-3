@@ -65,6 +65,11 @@ function rc = PsychEyelinkDispatchCallback(callArgs, msg)
 %                   feedback playback. Apologies to NJ for removing
 %                   previous comments where code was previously added, this
 %                   was done for easier reading of the code.
+% 12.11.2025    Refactor all nested helper functions into non-nested helper
+%               functions, as nested helpers can cause serious failures of
+%               the imaging pipeline, especially with external display
+%               backends like Vulkan, and thereby on macOS for Apple
+%               Silicon Macs!
 
 global eyelinkanimationtarget; %#ok<GVMIS>
 
@@ -95,11 +100,9 @@ persistent audio_status;
 persistent audio_devinfo;
 persistent audio_n_chan;
 persistent audio_fs;
-%persistent audio_ppa_isSlave;
 persistent beep_waveforms;
 
 persistent inDrift;
-newImage = 0;
 
 if 0 == Screen('WindowKind', eyelinktex)
     eyelinktex = []; % Previous PTB Screen() window has closed, needs to be recreated.
@@ -159,8 +162,6 @@ if ~isempty(el.ppa_pahandle) && isempty(audio_status)
     audio_devinfo = PsychPortAudio('GetDevices', [], audio_status.OutDeviceIndex);
     audio_n_chan = min(2,audio_devinfo.NrOutputChannels);
     audio_fs = audio_status.SampleRate;
-    %if PsychPortAudio('SetOpMode', pamaster) > 
-    %    audio_ppa_isSlave
 elseif isempty(el.ppa_pahandle) && isempty(audio_fs)
     audio_status = NaN;
     audio_devinfo = NaN;
@@ -276,7 +277,6 @@ switch eyecmd
         if Eyelink('Verbosity') >= 5
             fprintf('PsychEyelinkDispatchCallback: eyecmd == 8; Setup Image Display\n');
         end
-        newImage = 1;
         eyewidth  = callArgs(2);
         eyeheight = callArgs(3);
         ineyeimagemodedisplay=1;
@@ -342,7 +342,7 @@ switch eyecmd
             fprintf('PsychEyelinkDispatchCallback: eyecmd == 12; New Cal Target Sound\n');
         end
         if el.targetbeep && ~strcmpi(el.calTargetType, 'video')
-            EyelinkMakeSound(el, 'cal_target_beep', 1);
+            EyelinkMakeSound(el, 'cal_target_beep', 1, audio_n_chan, audio_fs, beep_waveforms);
         end
         
     case 13 % New Drift Chk/Corr Target Sound
@@ -350,7 +350,7 @@ switch eyecmd
             fprintf('PsychEyelinkDispatchCallback: eyecmd == 13; New Drift Target Sound\n');
         end
         if el.targetbeep && ~strcmpi(el.calTargetType, 'video')
-            EyelinkMakeSound(el, 'drift_correction_target_beep', 2);
+            EyelinkMakeSound(el, 'drift_correction_target_beep', 2, audio_n_chan, audio_fs, beep_waveforms);
         end
         
     case 14 % Cal Done Sound
@@ -361,10 +361,10 @@ switch eyecmd
             errc = callArgs(2);
             if errc > 0
                 % Failed
-                EyelinkMakeSound(el, 'calibration_failed_beep', 3);
+                EyelinkMakeSound(el, 'calibration_failed_beep', 3, audio_n_chan, audio_fs, beep_waveforms);
             else
                 % Success
-                EyelinkMakeSound(el, 'calibration_success_beep', 4);
+                EyelinkMakeSound(el, 'calibration_success_beep', 4, audio_n_chan, audio_fs, beep_waveforms);
             end
         end
         
@@ -376,10 +376,10 @@ switch eyecmd
             errc = callArgs(2);
             if errc > 0
                 % Failed
-                EyelinkMakeSound(el, 'drift_correction_failed_beep', 5);
+                EyelinkMakeSound(el, 'drift_correction_failed_beep', 5, audio_n_chan, audio_fs, beep_waveforms);
             else
                 % Success
-                EyelinkMakeSound(el, 'drift_correction_success_beep', 6);
+                EyelinkMakeSound(el, 'drift_correction_success_beep', 6, audio_n_chan, audio_fs, beep_waveforms);
             end
         end
         
@@ -456,7 +456,7 @@ if newcamimage      % New image frame received from EyeLink camera stream
 end
 
 if ~isempty(eyelinktex) && ineyeimagemodedisplay==1     % Draw cam image and caption
-    [imgtitle, dw, dh] = EyelinkDrawCameraImage(eyewin, el, eyelinktex, imgtitle, newImage);
+    [imgtitle, dw, dh] = EyelinkDrawCameraImage(eyewin, el, eyelinktex, imgtitle);
 end
 
 if ~isempty(calxy)  % Draw Cal Target
@@ -476,10 +476,10 @@ dontsync = 1;
 dontclear = 0; % set to 0 to hide instructions during camera display
 Screen('Flip', eyewin, [], dontclear, dontsync);   % Show it
 
-return;
+% End of main function PsychEyelinkDispatchCallback.
+end
 
-
-% Start of nested EyelinkDraw* function declarations
+%% Helper functions:
     function EyelinkDrawClearScreen(eyewin, el)
         % Set drawScreens 0 for mono modes, 1 for stereo modes:
         drawScreens = double(el.winInfo.StereoMode ~= 0);
@@ -489,16 +489,16 @@ return;
         end
     end
 
-    function EyelinkDrawInstructions(eyewin, el,msg)
+    function EyelinkDrawInstructions(eyewin, el, msg)
         oldFont=Screen(eyewin,'TextFont',el.msgfont);
         oldFontSize=Screen(eyewin,'TextSize',el.msgfontsize);
-        
+
         % Set drawScreens 0 for mono modes, 1 for stereo modes:
         drawScreens = double(el.winInfo.StereoMode ~= 0);
         for it = 0:drawScreens
             Screen('SelectStereoDrawBuffer', eyewin, it); % select left eye window
             DrawFormattedText(eyewin, el.helptext, 20, 20, el.msgfontcolour, [], [], [], 1);
-            
+
             if el.displayCalResults && ~isempty(msg)
                 DrawFormattedText(eyewin, msg, 20, 150, el.msgfontcolour, [], [], [], 1);
             end
@@ -507,11 +507,11 @@ return;
         Screen(eyewin,'TextSize',oldFontSize);
     end
 
-    function [imgtitle, dw, dh] = EyelinkDrawCameraImage(eyewin, el, eyelinktex, imgtitle, newImage)
+    function [imgtitle, dw, dh] = EyelinkDrawCameraImage(eyewin, el, eyelinktex, imgtitle)
         eyerect=Screen('Rect', eyelinktex);
         % we could cash some of the below values....
         wrect=Screen('Rect', eyewin);
-        [width, height]=Screen('WindowSize', eyewin);
+        width = Screen('WindowSize', eyewin);
         dw=round(el.eyeimgsize/100*width);
         dh=round(dw * eyerect(4)/eyerect(3));
         drect=[ 0 0 dw dh ];
@@ -546,12 +546,13 @@ return;
     end
 
     function EyelinkDrawCalibrationTarget(eyewin, el, calxy, eyelinkanimationtarget)
-        [width, height]=Screen('WindowSize', eyewin);
+        width = Screen('WindowSize', eyewin);
 
         % Set drawScreens 0 for mono modes, 1 for stereo modes:
         drawScreens = double(el.winInfo.StereoMode ~= 0);
         for it = 0:drawScreens
             Screen('SelectStereoDrawBuffer', eyewin, it); % select eye window
+
             switch el.calTargetType
                 case 'video'
                     if( ~isempty(el.calAnimationTargetFilename) && ~isempty(eyelinkanimationtarget))
@@ -567,16 +568,16 @@ return;
                             end
                         end
                     end
-                    
+
                 case 'image'
                     rect=CenterRectOnPoint([0 0 el.calImageInfo.Width el.calImageInfo.Height], calxy(1), calxy(2));
                     Screen('DrawTexture', eyewin , el.calImageTexture, [], rect, [], 0);
-                    
+   
                 otherwise
                     % default to el.calTargetType = 'ellipse' target drawing
                     size=round(el.calibrationtargetsize / 100 * width);
                     inset=round(el.calibrationtargetwidth / 100 * width);
-                    
+
                     % Use FillOval for larger dots:
                     Screen('FillOval', eyewin, el.calibrationtargetcolour, [calxy(1)-size/2 calxy(2)-size/2 calxy(1)+size/2 calxy(2)+size/2], size+2);
                     Screen('FillOval', eyewin, el.backgroundcolour, [calxy(1)-inset/2 calxy(2)-inset/2 calxy(1)+inset/2 calxy(2)+inset/2], inset+2)
@@ -584,7 +585,7 @@ return;
         end
     end
 
-    function EyelinkMakeSound(el, s, i)
+    function EyelinkMakeSound(el, s, i, audio_n_chan, audio_fs, beep_waveforms)
         % set all sounds in one place, sound params defined in
         % eyelinkInitDefaults
         if any(strcmp( ...
@@ -614,4 +615,3 @@ return;
             end
         end
     end
-end

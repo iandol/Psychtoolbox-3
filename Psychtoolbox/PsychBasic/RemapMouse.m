@@ -48,10 +48,12 @@ function [xo, yo] = RemapMouse(win, viewId, xm, ym)
 % 12.01.2013  mk  Added panelfitter support.
 % 04.11.2014  mk  Handle Retina modes on OSX and rotation via panelfitter.
 % 03.10.2022  mk  Handle 'AllViews' in absence of 'AllViews' map -> Fallback to 'LeftView'.
+% 19.08.2025  mk  Handle Retina scaling on Linux + Wayland.
+% 01.03.2026  mk  Adapt to new macOS Retina handling.
 
 % This global array is setup by PsychImaging() when setting up geometric
 % display correction:
-global ptb_geometry_inverseWarpMap;
+global ptb_geometry_inverseWarpMap; %#ok<GVMIS>
 
 if nargin < 4
     error('At least one of the required parameters is missing!');
@@ -65,10 +67,16 @@ if ~ischar(viewId)
     error('viewId parameter is not a name string, as required!');
 end
 
-% OSX handling of Retina displays:
-if IsOSX
+% Handling of Retina displays on macOS and Linux+Wayland:
+if IsOSX || IsWayland
     winfo = Screen('GetWindowInfo', win);
     isf = winfo.ExternalMouseMultFactor;
+    if (isf > 0) && IsOSX
+        isf = isf * 2;
+    else
+        isf = abs(isf);
+    end
+
     xm = xm * isf;
     ym = ym * isf;
 end
