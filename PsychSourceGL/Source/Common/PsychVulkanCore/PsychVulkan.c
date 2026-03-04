@@ -79,6 +79,10 @@
 #define VK_DRIVER_ID_NVIDIA_PROPRIETARY VK_DRIVER_ID_NVIDIA_PROPRIETARY_KHR
 #endif
 
+#ifndef VK_DRIVER_ID_MESA_V3DV
+#define VK_DRIVER_ID_MESA_V3DV 19
+#endif
+
 // Defines from Screen, replicated here for simplicity:
 #define kPsychLeft      0
 #define kPsychTop       1
@@ -947,8 +951,15 @@ void PsychVulkanCheckInit(psych_bool dontfail)
                     printf("IMPLEMENTATION BUG: Reached code in pass 0 which should only be reachable in pass 1 !!!\n");
 
                 // Basic HDR support:
-                if (hasHDR && !fpSetHdrMetadataEXT)
+                if (hasHDR && !fpSetHdrMetadataEXT) {
                     GET_INSTANCE_PROC_ADDR(vulkanInstance, SetHdrMetadataEXT);
+                }
+                else if (!hasHDR && (driverprops.driverID == VK_DRIVER_ID_MESA_V3DV) &&
+                         (pdevprops2.properties.driverVersion >= VK_MAKE_VERSION(26, 0, 0))) {
+                    // Special case: Mesa V3DV as of Mesa 26.0 does support HDR, just not vkSetHdrMetaDataEXT due to
+                    // an omission in code. Force hasHDR true for HDR support without ability to set our own metadata:
+                    hasHDR = TRUE;
+                }
 
                 // AMD specific local backlight dimming control suppport on FreeSync2:
                 if (hasHDRLocalDimming && !fpSetLocalDimmingAMD)
@@ -3493,6 +3504,13 @@ psych_bool PsychSetHDRMetaData(PsychVulkanWindow* window)
     if (!window->hdrMode) {
         if (verbosity > 1)
             printf("PsychVulkanCore-WARNING: Tried to call PsychSetHDRMetaData() on a window without HDR enabled! Ignored.\n");
+
+        return(FALSE);
+    }
+
+    if (fpSetHdrMetadataEXT == NULL) {
+        if (verbosity > 1)
+            printf("PsychVulkanCore-WARNING: Tried to call PsychSetHDRMetaData() on a window attached to a gpu without HDR metadata setting support! Ignored.\n");
 
         return(FALSE);
     }
