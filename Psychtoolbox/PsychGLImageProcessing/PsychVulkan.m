@@ -569,9 +569,9 @@ if strcmpi(cmd, 'PerformPostWindowOpenSetup')
     Screen('Preference', 'ScreenToHead', screenId, outputMappings{screenId + 1}(1, 1), outputMappings{screenId + 1}(2, 1), 0);
 
     % Mesa zink OpenGL driver in use on Linux? zink does not support OpenGL-Vulkan
-    % interop images with a tiled layout, so we must force-disable tiling and instead
-    % use a linear layout:
-    if IsLinux && ~isempty(strfind(winfo.GLRenderer, 'zink'))
+    % interop images with a tiled layout on Apple Silicon, so we must force-disable tiling and instead
+    % use a linear layout. zink on some other gpu's, e.g., RaspberryPi Broadcom VideoCore 6 is happy with tiled:
+    if IsLinux && ~isempty(strfind(winfo.GLRenderer, 'zink')) && ~isempty(strfind(winfo.GLRenderer, 'HONEYKRISP'))
         flags = mor(flags, 4);
     end
 
