@@ -1519,7 +1519,7 @@ XRRModeInfo* PsychOSGetModeLine(int screenId, int outputIdx, XRRCrtcInfo **crtc)
 
 const char* PsychOSGetOutputProps(int screenId, int outputIdx, psych_bool returnDisabledOutputs, unsigned long *mm_width, unsigned long *mm_height, unsigned long *rrOutputPrimary)
 {
-    static char outputName[100];
+    static char outputName[100] = { 0 };
     int o;
     XRROutputInfo *output_info = NULL;
     RRCrtc crtc;
@@ -1561,7 +1561,7 @@ const char* PsychOSGetOutputProps(int screenId, int outputIdx, psych_bool return
     if (o == res->noutput) PsychErrorExitMsg(PsychError_user, "Invalid output index provided! No such output for this screen!");
 
     // Store output name to return:
-    sprintf(outputName, "%s", output_info->name);
+    snprintf(outputName, 100, "%s", output_info->name);
 
     // And width / height in mm:
     if (mm_width) *mm_width = output_info->mm_width;
@@ -1569,6 +1569,38 @@ const char* PsychOSGetOutputProps(int screenId, int outputIdx, psych_bool return
     if (rrOutputPrimary) *rrOutputPrimary = (unsigned long) res->outputs[o];
 
     XRRFreeOutputInfo(output_info);
+
+    // Are we running under a fake X11 XWayland server on top of Wayland?
+    if (rrOutputPrimary && getenv("XDG_SESSION_TYPE") && strstr(getenv("XDG_SESSION_TYPE"), "wayland")) {
+        // Seems so. Try to find out if there is a X11 RandR leasable output associated
+        // with the chosen output under XWayland. Leasable outputs under XWayland differ
+        // from leasable outputs under native XOrg: They are always marked non-desktop,
+        // inactive under X11, and have a name of the form "lease-NAME", with NAME being
+        // the name of the output under X11. Iow. each leasable X11 output gets a sibling
+        // which is inactive, connected, marked non-desktop, leasable, and the prefix
+        // "lease-" to the original name.
+        //
+        // Search the list of outputs again for a leasable variant of this output:
+        char leaseOutputName[100] = { 0 };
+        snprintf(leaseOutputName, 100, "lease-%s", outputName);
+
+        PsychLockDisplay();
+        for (o = 0; o < res->noutput; o++) {
+            output_info = XRRGetOutputInfo(displayCGIDs[screenId], res, res->outputs[o]);
+
+            // Matching sibling? Then return the XID of the leasable RandR output, instead
+            // of the XID of the non-leasable X11 connector we are asked for.
+            if (0 == strcmp(output_info->name, leaseOutputName)) {
+                *rrOutputPrimary = (unsigned long) res->outputs[o];
+                if (PsychPrefStateGet_Verbosity() > 3)
+                    printf("PTB-INFO: Found leasable RandR sibling output %s - Returning its XID.\n",
+                           leaseOutputName, *rrOutputPrimary);
+            }
+
+            XRRFreeOutputInfo(output_info);
+        }
+        PsychUnlockDisplay();
+    }
 
     // Return output name:
     return(&outputName[0]);
