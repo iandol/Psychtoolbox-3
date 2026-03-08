@@ -1581,8 +1581,8 @@ const char* PsychOSGetOutputProps(int screenId, int outputIdx, psych_bool return
         // "lease-" to the original name.
         //
         // Search the list of outputs again for a leasable variant of this output:
-        char leaseOutputName[100] = { 0 };
-        snprintf(leaseOutputName, 100, "lease-%s", outputName);
+        char leaseOutputName[110] = { 0 };
+        snprintf(leaseOutputName, 110, "lease-%s", outputName);
 
         PsychLockDisplay();
         for (o = 0; o < res->noutput; o++) {
