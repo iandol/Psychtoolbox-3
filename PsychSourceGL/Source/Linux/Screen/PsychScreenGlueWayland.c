@@ -1000,7 +1000,11 @@ pointer_handle_motion(void *data,
                       wl_fixed_t surface_y)
 {
     struct seat_info *seat = data;
-    if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: Pointer motion on seat %p: time %i, x = %lf y = %lf\n", seat, time, wl_fixed_to_double(surface_x), wl_fixed_to_double(surface_y));
+
+    if (PsychPrefStateGet_Verbosity() > 5)
+        printf("PTB-DEBUG: Pointer motion on seat %p: time %i, x = %lf y = %lf\n", seat, time,
+               wl_fixed_to_double(surface_x), wl_fixed_to_double(surface_y));
+
     seat->posX = wl_fixed_to_double(surface_x);
     seat->posY = wl_fixed_to_double(surface_y);
 
@@ -2499,7 +2503,8 @@ void PsychOSDefineWaylandCursor(int screenNumber, int deviceId, const char* curs
     struct seat_info *seat;
 
     // Check for valid screenNumber, although it will be ignored on Wayland:
-    if ((screenNumber >= numDisplays) || (screenNumber < 0)) PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychOSDefineWaylandCursor() is out of range");
+    if ((screenNumber >= numDisplays) || (screenNumber < 0))
+        PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychOSDefineWaylandCursor() is out of range");
 
     // deviceId -1 means "auto-detected default pointer". Simply use the first found pointer device:
     if (deviceId < 0) {
@@ -2510,7 +2515,8 @@ void PsychOSDefineWaylandCursor(int screenNumber, int deviceId, const char* curs
     }
 
     // Outside valid range for input devices?
-    if (deviceId < 0 || deviceId >= numInputDevices) PsychErrorExitMsg(PsychError_user, "Invalid 'mouseIndex' provided. No such cursor pointer.");
+    if (deviceId < 0 || deviceId >= numInputDevices)
+        PsychErrorExitMsg(PsychError_user, "Invalid 'mouseIndex' provided. No such cursor pointer.");
 
     // No device under that id, or device isn't a pointer?
     if (!waylandInputDevices[deviceId] || !(waylandInputDevices[deviceId]->capabilities & WL_SEAT_CAPABILITY_POINTER)) {
@@ -2523,7 +2529,8 @@ void PsychOSDefineWaylandCursor(int screenNumber, int deviceId, const char* curs
         seat->current_cursor = wl_cursor_theme_get_cursor(wayland_cursor_theme, cursorName);
         if (!seat->current_cursor) {
             if (PsychPrefStateGet_Verbosity() > 0) {
-                printf("PTB-ERROR: Loading Wayland cursor from theme for pointer device %i [seat %p] failed. Cursor support unavailable on this seat!\n", deviceId, seat);
+                printf("PTB-ERROR: Loading Wayland cursor for pointer %i [seat %p] failed. Cursor unavailable on this seat!\n",
+                       deviceId, seat);
             }
         }
 
@@ -2539,7 +2546,8 @@ void PsychHideCursor(int screenNumber, int deviceIdx)
     struct seat_info *seat;
 
     // Check for valid screenNumber, although it will be ignored on Wayland:
-    if ((screenNumber >= numDisplays) || (screenNumber < 0)) PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychHideCursor() is out of range");
+    if ((screenNumber >= numDisplays) || (screenNumber < 0))
+        PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychHideCursor() is out of range");
 
     // deviceIdx -1 means "auto-detected default pointer". Simply use the first found pointer device:
     if (deviceIdx < 0) {
@@ -2550,7 +2558,8 @@ void PsychHideCursor(int screenNumber, int deviceIdx)
     }
 
     // Outside valid range for input devices?
-    if (deviceIdx < 0 || deviceIdx >= numInputDevices) PsychErrorExitMsg(PsychError_user, "Invalid 'mouseIndex' provided. No such cursor pointer.");
+    if (deviceIdx < 0 || deviceIdx >= numInputDevices)
+        PsychErrorExitMsg(PsychError_user, "Invalid 'mouseIndex' provided. No such cursor pointer.");
 
     // No device under that id, or device isn't a pointer?
     if (!waylandInputDevices[deviceIdx] || !(waylandInputDevices[deviceIdx]->capabilities & WL_SEAT_CAPABILITY_POINTER)) {
@@ -2577,7 +2586,8 @@ void PsychShowCursor(int screenNumber, int deviceIdx)
     struct seat_info *seat;
 
     // Check for valid screenNumber, although it will be ignored on Wayland:
-    if ((screenNumber >= numDisplays) || (screenNumber < 0)) PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychShowCursor() is out of range");
+    if ((screenNumber >= numDisplays) || (screenNumber < 0))
+        PsychErrorExitMsg(PsychError_internal, "screenNumber passed to PsychShowCursor() is out of range");
 
     // deviceIdx -1 means "auto-detected default pointer". Simply use the first found pointer device:
     if (deviceIdx < 0) {
@@ -2588,7 +2598,8 @@ void PsychShowCursor(int screenNumber, int deviceIdx)
     }
 
     // Outside valid range for input devices?
-    if (deviceIdx < 0 || deviceIdx >= numInputDevices) PsychErrorExitMsg(PsychError_user, "Invalid 'mouseIndex' provided. No such cursor pointer.");
+    if (deviceIdx < 0 || deviceIdx >= numInputDevices)
+        PsychErrorExitMsg(PsychError_user, "Invalid 'mouseIndex' provided. No such cursor pointer.");
 
     // No device under that id, or device isn't a pointer?
     if (!waylandInputDevices[deviceIdx] || !(waylandInputDevices[deviceIdx]->capabilities & WL_SEAT_CAPABILITY_POINTER)) {
@@ -2631,7 +2642,7 @@ void PsychPositionCursor(int screenNumber, int x, int y, int deviceIdx)
     if (!wayland_pointer_warp) {
         // Not available on this Wayland setup:
         if (PsychPrefStateGet_Verbosity() > 1)
-            printf("PTB-WARNING: SetMouse() mouse cursor positioning request ignored, as this is not supported on this Wayland system.\n");
+            printf("PTB-WARNING: SetMouse() mouse cursor positioning request ignored. Not supported on this Wayland system.\n");
 
         return;
     }
