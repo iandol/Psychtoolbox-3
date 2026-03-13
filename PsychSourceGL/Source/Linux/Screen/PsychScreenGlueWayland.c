@@ -1318,9 +1318,9 @@ wayland_registry_listener_global(void *data,
         if (PsychPrefStateGet_Verbosity() > 3) printf("PTB-DEBUG: Wayland wp_viewporter bound!\n");
     }
 
-    // Look for zxdg_output_manager support of version v1+ - We need at least interface version 2:
+    // Look for zxdg_output_manager support of version v1+ - We need at least interface version 2, up to 3:
     if (!strcmp(interface, "zxdg_output_manager_v1") && (version >= 2)) {
-        wayland_output_manager = wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, version);
+        wayland_output_manager = wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, MIN(version, 3));
         if (!wayland_output_manager) {
             if (PsychPrefStateGet_Verbosity() > 0) printf("PTB-ERROR: wl_registry_bind for zxdg_output_manager_v1 failed!\n");
             return;
