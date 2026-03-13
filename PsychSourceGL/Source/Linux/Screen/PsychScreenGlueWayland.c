@@ -758,6 +758,7 @@ struct seat_info {
 
     // Pointer state:
     uint32_t last_serial;
+    uint32_t last_enter_serial;
     double buttonState[256];
     double posX;
     double posY;
@@ -865,7 +866,10 @@ keyboard_handle_enter(void *data, struct wl_keyboard *keyboard,
                       struct wl_array *keys)
 {
     struct seat_info *seat = data;
-    if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: Keyboard focus entered surface %p on keyboard of seat %p.\n", surface, seat);
+    seat->last_serial = serial;
+
+    if (PsychPrefStateGet_Verbosity() > 4)
+        printf("PTB-DEBUG: Keyboard focus entered surface %p on keyboard of seat %p. Serial %u\n", surface, seat, serial);
 
     // Reset keyState to "nothing pressed":
     memset(&seat->keyState, 0, sizeof(seat->keyState));
@@ -877,7 +881,10 @@ keyboard_handle_leave(void *data, struct wl_keyboard *keyboard,
                       uint32_t serial, struct wl_surface *surface)
 {
     struct seat_info *seat = data;
-    if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: Keyboard focus lost for surface %p on keyboard of seat %p.\n", surface, seat);
+    seat->last_serial = serial;
+
+    if (PsychPrefStateGet_Verbosity() > 4)
+        printf("PTB-DEBUG: Keyboard focus lost for surface %p on keyboard of seat %p. Serial %u\n", surface, seat, serial);
 
     // Reset keyState to "nothing pressed":
     memset(&seat->keyState, 0, sizeof(seat->keyState));
@@ -890,7 +897,10 @@ keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
                     uint32_t state)
 {
     struct seat_info *seat = data;
-    if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: %i: [%i msecs]: KEY %i -> %i\n", serial, time, key, state);
+    seat->last_serial = serial;
+
+    if (PsychPrefStateGet_Verbosity() > 4)
+        printf("PTB-DEBUG: %u: [%u msecs]: KEY %i -> %i\n", serial, time, key, state);
 
     // Update keyState for this key:
     if (key < 256) {
@@ -906,7 +916,10 @@ keyboard_handle_modifiers(void *data, struct wl_keyboard *keyboard,
                           uint32_t group)
 {
     struct seat_info *seat = data;
-    if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: Keyboard modifiers updated for keyboard of seat %p.\n", seat);
+    seat->last_serial = serial;
+
+    if (PsychPrefStateGet_Verbosity() > 4)
+        printf("PTB-DEBUG: Keyboard modifiers updated for keyboard of seat %p. Serial %u\n", seat, serial);
 }
 
 // Repeat info unused, and unsupported as long as we want protocol v3:
@@ -941,9 +954,11 @@ pointer_handle_enter(void *data,
     struct wl_cursor_image *image;
     struct seat_info *seat = data;
 
-    if (PsychPrefStateGet_Verbosity() > 5) printf("PTB-DEBUG: Pointer focus entered surface %p for pointer of seat %p.\n", surface, seat);
+    if (PsychPrefStateGet_Verbosity() > 4)
+        printf("PTB-DEBUG: Pointer focus entered surface %p for pointer of seat %p at serial %u.\n", surface, seat, serial);
 
     seat->last_serial = serial;
+    seat->last_enter_serial = serial;
     seat->posX = wl_fixed_to_double(surface_x);
     seat->posY = wl_fixed_to_double(surface_y);
     seat->pointerFocusWindow = surface;
@@ -987,8 +1002,10 @@ pointer_handle_leave(void *data,
                       struct wl_surface *surface)
 {
     struct seat_info *seat = data;
-    if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: Pointer focus lost for surface %p for pointer of seat %p.\n", surface, seat);
+    if (PsychPrefStateGet_Verbosity() > 4)
+        printf("PTB-DEBUG: Pointer focus lost for surface %p for pointer of seat %p at serial %u.\n", surface, seat, serial);
 
+    seat->last_serial = serial;
     seat->pointerFocusWindow = NULL;
 }
 
@@ -1030,7 +1047,12 @@ pointer_handle_button(void *data,
                       uint32_t state)
 {
     struct seat_info *seat = data;
-    if (PsychPrefStateGet_Verbosity() > 4) printf("PTB-DEBUG: Pointer button changed on seat %p: time %i, button = %i, state = %i\n", seat, time, button, state);
+
+    if (PsychPrefStateGet_Verbosity() > 4)
+        printf("PTB-DEBUG: Pointer button changed on seat %p: time %i, button = %i, state = %i, serial %u\n",
+               seat, time, button, state, serial);
+
+    seat->last_serial = serial;
 
     // Remap standard mouse buttons of 3-5 Button mice to our standard 0-4:
     switch (button) {
@@ -1167,8 +1189,11 @@ seat_handle_capabilities(void *data, struct wl_seat *wl_seat,
             }
         }
 
-        // Cursor hidden by default:
+        // Mark cursor hidden:
         seat->cursor_hidden = TRUE;
+
+        // Then initially show it:
+        PsychShowCursor(0, numInputDevices - 1);
 
         //seat->info->roundtrip_needed = true;
         wayland_roundtrip_needed = TRUE;
@@ -2665,6 +2690,9 @@ void PsychPositionCursor(int screenNumber, int x, int y, int deviceIdx)
 
     seat = waylandInputDevices[deviceIdx];
 
+    // Update internal state:
+    ProcessWaylandEvents(screenNumber);
+
     // Doesn't work if no window has pointer focus:'
     if (!seat->pointerFocusWindow)
         return;
@@ -2674,8 +2702,14 @@ void PsychPositionCursor(int screenNumber, int x, int y, int deviceIdx)
     xs = (double) x / windowRecord->externalMouseMultFactor;
     ys = (double) y / windowRecord->externalMouseMultFactor;
 
+    if (PsychPrefStateGet_Verbosity() > 4) {
+        printf("PTB-DEBUG: Reposition pointer on seat %p: focus surface %p, serial %u, last_enter_serial %u, x = %lf y = %lf\n",
+               seat, seat->pointerFocusWindow, seat->last_serial, seat->last_enter_serial, xs, ys);
+    }
+
     // Execute request: Sadly there is no feedback if the request was actually honored by the compositor:
-    wp_pointer_warp_v1_warp_pointer(wayland_pointer_warp, seat->pointerFocusWindow, wl_seat_get_pointer(seat->seat), wl_fixed_from_double(xs), wl_fixed_from_double(ys), seat->last_serial);
+    wp_pointer_warp_v1_warp_pointer(wayland_pointer_warp, seat->pointerFocusWindow, wl_seat_get_pointer(seat->seat),
+                                    wl_fixed_from_double(xs), wl_fixed_from_double(ys), seat->last_enter_serial);
 
     ProcessWaylandEvents(screenNumber);
 }
