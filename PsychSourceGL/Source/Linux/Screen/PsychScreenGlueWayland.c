@@ -2646,7 +2646,16 @@ void PsychShowCursor(int screenNumber, int deviceIdx)
         buffer = wl_cursor_image_get_buffer(image);
 
         // Assign cursor image to the cursor surface:
-        wl_surface_attach(seat->cursor_surface, buffer, seat->hotspot_x - image->hotspot_x, seat->hotspot_y - image->hotspot_y);
+        if (wl_surface_get_version(seat->cursor_surface) < 5) {
+            // Old style, non-zero offsets allowed:
+            wl_surface_attach(seat->cursor_surface, buffer, seat->hotspot_x - image->hotspot_x, seat->hotspot_y - image->hotspot_y);
+        }
+        else {
+            // New style since v5, only zero offsets + a new function to set non-zero offset:
+            wl_surface_attach(seat->cursor_surface, buffer, 0, 0);
+            wl_surface_offset(seat->cursor_surface, seat->hotspot_x - image->hotspot_x, seat->hotspot_y - image->hotspot_y);
+        }
+
         wl_surface_damage(seat->cursor_surface, 0, 0, image->width, image->height);
         wl_surface_commit(seat->cursor_surface);
         seat->hotspot_x = image->hotspot_x;
