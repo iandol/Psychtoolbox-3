@@ -2160,10 +2160,10 @@ void PsychGSCreateMovie(PsychWindowRecordType *win, const char* moviename, doubl
     PsychGSProcessMovieContext(&(movieRecordBANK[slotid]), FALSE);
 
     // Attach custom made audio sink?
-    if ((pstring = strstr(movieOptions, "AudioSink="))) {
+    if ((pstring = strstr((char*) movieOptions, "AudioSink="))) {
         pstring += strlen("AudioSink=");
         pstring = strdup(pstring);
-        if (strstr(pstring, ":::") != NULL) *(strstr(pstring, ":::")) = 0;
+        if (strstr(pstring, ":::") != NULL) *(strstr((char*) pstring, ":::")) = 0;
         audiosink = gst_parse_bin_from_description((const gchar *) pstring, TRUE, NULL);
         if (audiosink) {
             g_object_set(G_OBJECT(theMovie), "audio-sink", audiosink, NULL);
@@ -2384,7 +2384,7 @@ void PsychGSCreateMovie(PsychWindowRecordType *win, const char* moviename, doubl
             }
 
             // Optional 'movieOptions' parameter 'OverrideEOTF=x' specified to override detected EOTF to type x?
-            if ((pstring = strstr(movieOptions, "OverrideEOTF="))) {
+            if ((pstring = strstr((char*) movieOptions, "OverrideEOTF="))) {
                 // Yes. Make it so, as long as pixelFormat 11 playback is requested:
                 if ((pixelFormat == 11) && (1 == sscanf(pstring, "OverrideEOTF=%i", (int *) &movieRecordBANK[slotid].codecVideoInfo.colorimetry.transfer))) {
                     if (PsychPrefStateGet_Verbosity() > 3)
